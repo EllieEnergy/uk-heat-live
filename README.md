@@ -21,7 +21,7 @@ Live site → **[EllieEnergy.github.io/uk-heat-live](https://EllieEnergy.github.
 
 1. **`update.py`** runs every 5 minutes via GitHub Actions.
 2. It fetches:
-   - **Gas demand** from the [National Gas Transmission Data Portal](https://data.nationalgas.com) (LDZ Offtake, all 13 zones aggregated)
+   - **Gas demand** from the [National Gas REST API](https://api.nationalgas.com/operationaldata/v1) (LDZ Offtake, all 13 zones aggregated)
    - **Outside temperature** from [Open-Meteo](https://open-meteo.com) (grid centroid 53.5°N, 1.5°W)
    - **Live grid carbon intensity** from the [Carbon Intensity API](https://api.carbonintensity.org.uk) (National Grid ESO)
 3. Heat demand is split by sector (domestic 62%, commercial 28%, industrial excluded — A1–A3) and by technology using published mix assumptions (A6–A7).
@@ -34,7 +34,7 @@ Live site → **[EllieEnergy.github.io/uk-heat-live](https://EllieEnergy.github.
 
 | Source | Data | URL |
 |---|---|---|
-| National Gas Transmission | LDZ offtake (kW, ~5 min) | `data.nationalgas.com` |
+| National Gas Transmission | LDZ offtake (kW, ~5 min) | `api.nationalgas.com` |
 | Open-Meteo | Current weather | `api.open-meteo.com` |
 | Carbon Intensity API | Real-time grid CO₂ (gCO₂/kWh) | `api.carbonintensity.org.uk` |
 | DESNZ | Domestic/commercial gas shares | [Energy Consumption in the UK](https://www.gov.uk/government/collections/energy-consumption-in-the-uk) |
