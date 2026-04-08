@@ -9,15 +9,32 @@ import math
 import os
 import pathlib
 import datetime
+import xml.etree.ElementTree as ET
 import requests
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-NGT_RESOURCE_ID = os.environ.get(
-    "NGT_RESOURCE_ID", "262f3f5a-cf93-436f-a513-1a112ab3c929"
+# National Gas Transmission SOAP API for instantaneous flow data
+# No authentication required for this public endpoint.
+SOAP_ENDPOINT = (
+    "https://energywatch.nationalgas.com/EDP-PublicUI/PublicPI/"
+    "InstantaneousFlowWebService.asmx"
 )
-NGT_API_URL = "https://data.nationalgas.com/api/3/action/datastore_search"
+SOAP_ACTION = "http://www.NationalGrid.com/EDP/UI/GetInstantaneousFlowData"
+SOAP_BODY = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+    ' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+    ' xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+    "<soap:Body>"
+    '<GetInstantaneousFlowData xmlns="http://www.NationalGrid.com/EDP/UI/" />'
+    "</soap:Body>"
+    "</soap:Envelope>"
+)
+# 1 mcm/d → MW  (calorific value of natural gas: 39.5 MJ/m³)
+MCM_D_TO_MW: float = 1_000_000 * 39.5 / 3600 / 24
+
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
     "?latitude=53.5&longitude=-1.5&current_weather=true&timezone=Europe%2FLondon"
@@ -79,27 +96,81 @@ TECH_COLOURS = {
 # Data fetching
 # ---------------------------------------------------------------------------
 
+def _local_tag(tag: str) -> str:
+    """Strip XML namespace prefix from an ElementTree tag string."""
+    return tag.split("}")[-1] if "}" in tag else tag
+
+
 def fetch_gas_demand_mw() -> tuple[float, bool]:
-    """Return (gas_demand_MW, is_live).  Falls back to seasonal estimate."""
+    """Return (gas_demand_MW, is_live). Falls back to seasonal estimate.
+
+    Calls the National Gas Transmission SOAP API for instantaneous flow data.
+    Values are returned in mcm/d and converted to MW via MCM_D_TO_MW.
+    """
     try:
-        resp = requests.get(
-            NGT_API_URL,
-            params={
-                "resource_id": NGT_RESOURCE_ID,
-                "limit": 100,
-                "sort": "ApplicableAt desc",
+        resp = requests.post(
+            SOAP_ENDPOINT,
+            data=SOAP_BODY.encode("utf-8"),
+            headers={
+                "Content-Type": "text/xml; charset=utf-8",
+                "SOAPAction": SOAP_ACTION,
             },
-            timeout=15,
+            timeout=20,
         )
         resp.raise_for_status()
-        records = resp.json()["result"]["records"]
-        if not records:
-            raise ValueError("No records returned")
-        total_kw = sum(
-            float(r.get("Value", 0) or 0) for r in records
+        root = ET.fromstring(resp.text)
+
+        def to_float(text: str | None) -> float | None:
+            try:
+                return float((text or "").strip().replace(",", ""))
+            except (ValueError, TypeError):
+                return None
+
+        # Build a flat list of (local_tag, text) pairs for the whole document.
+        flat = [(_local_tag(el.tag), (el.text or "").strip()) for el in root.iter()]
+
+        # Strategy 1: find a "Total Demand" named element then grab the next
+        # Value/Flow element within a short look-ahead window.
+        for i, (tag, text) in enumerate(flat):
+            if ("name" in tag.lower() or "title" in tag.lower()) and (
+                "total" in text.lower() and "demand" in text.lower()
+            ):
+                for j in range(i + 1, min(i + 20, len(flat))):
+                    jtag, jtext = flat[j]
+                    if "value" in jtag.lower() or "flow" in jtag.lower():
+                        v = to_float(jtext)
+                        if v is not None and v > 0:
+                            return v * MCM_D_TO_MW, True
+
+        # Strategy 2: identify individual LDZ zone rows and sum their values.
+        LDZ_CODES = {
+            "sc", "no", "nw", "ne", "em", "wm",
+            "sw", "se", "so", "ts", "wn", "ea", "nt",
+        }
+        ldz_sum = 0.0
+        ldz_count = 0
+        for i, (tag, text) in enumerate(flat):
+            if (
+                "name" in tag.lower() or "rowname" in tag.lower()
+            ) and text.lower() in LDZ_CODES:
+                for j in range(i + 1, min(i + 10, len(flat))):
+                    jtag, jtext = flat[j]
+                    if "value" in jtag.lower():
+                        v = to_float(jtext)
+                        if v is not None:
+                            ldz_sum += v
+                            ldz_count += 1
+                            break
+
+        if ldz_count >= 5:
+            return ldz_sum * MCM_D_TO_MW, True
+
+        raise ValueError(
+            f"Could not extract demand from SOAP response "
+            f"(LDZ zones found: {ldz_count})"
         )
-        return total_kw / 1_000.0, True  # kW → MW
-    except Exception:
+    except Exception as exc:
+        print(f"  SOAP API error ({type(exc).__name__}): {exc}")
         month = datetime.datetime.now(datetime.timezone.utc).month
         gw = SEASONAL_FALLBACK_GW[month]
         return gw * 1_000.0, False  # GW → MW
@@ -232,9 +303,12 @@ def compute_heat(gas_total_mw: float, elec_ci_gco2_kwh: float | None) -> dict:
         d = domestic["technologies"][tech]
         c = commercial["technologies"][tech]
         agg_techs[tech] = {
-            "heat_mw":    round(d["heat_mw"] + c["heat_mw"], 2),
-            "carbon_t_h": round(d["carbon_t_h"] + c["carbon_t_h"], 2),
-            "cost_gbp_h": round(d["cost_gbp_h"] + c["cost_gbp_h"], 2),
+            "heat_mw":     round(d["heat_mw"] + c["heat_mw"], 2),
+            "fuel_mw":     round(d["fuel_mw"] + c["fuel_mw"], 2),
+            "dom_heat_mw": round(d["heat_mw"], 2),
+            "com_heat_mw": round(c["heat_mw"], 2),
+            "carbon_t_h":  round(d["carbon_t_h"] + c["carbon_t_h"], 2),
+            "cost_gbp_h":  round(d["cost_gbp_h"] + c["cost_gbp_h"], 2),
         }
 
     return {
@@ -255,13 +329,22 @@ def compute_heat(gas_total_mw: float, elec_ci_gco2_kwh: float | None) -> dict:
 
 def intensity_colour(index: str) -> str:
     mapping = {
-        "very low": "#3fb950",
-        "low":      "#58a6ff",
-        "moderate": "#e3b341",
-        "high":     "#f85149",
-        "very high":"#f85149",
+        "very low": "#1a7f37",
+        "low":      "#0969da",
+        "moderate": "#bf8700",
+        "high":     "#cf222e",
+        "very high": "#cf222e",
     }
-    return mapping.get((index or "").lower(), "#8b949e")
+    return mapping.get((index or "").lower(), "#656d76")
+
+
+def co2_colour(kg_kwh: float) -> str:
+    """Colour for electricity carbon intensity based on kgCO₂/kWh thresholds."""
+    if kg_kwh < 0.150:
+        return "#1a7f37"
+    if kg_kwh < 0.300:
+        return "#bf8700"
+    return "#cf222e"
 
 
 def pie_svg(tech_data: dict, total_heat_mw: float) -> str:
@@ -291,7 +374,8 @@ def pie_svg(tech_data: dict, total_heat_mw: float) -> str:
         title = f"{tech}: {val:,.0f} MW ({pct}%)"
         paths.append(
             f'<path d="M{cx},{cy} L{x1:.2f},{y1:.2f} A{r},{r} 0 {large},1 {x2:.2f},{y2:.2f} Z" '
-            f'fill="{colour}" stroke="#0d1117" stroke-width="2">'
+            f'fill="{colour}" stroke="#ffffff" stroke-width="2" '
+            f'data-tech="{tech}" data-mw="{val:,.0f}" data-pct="{pct}" style="cursor:pointer">'
             f'<title>{title}</title></path>'
         )
         start = end
@@ -315,19 +399,19 @@ def bar_chart(sector_data: dict, label: str) -> str:
         rows.append(
             f'<div style="margin-bottom:6px">'
             f'<div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px">'
-            f'<span style="color:#e6edf3">{tech}</span>'
-            f'<span style="color:#8b949e">{v["heat_mw"]:,.0f} MW</span></div>'
-            f'<div style="background:#30363d;border-radius:4px;height:8px;overflow:hidden">'
+            f'<span style="color:#1f2328">{tech}</span>'
+            f'<span style="color:#656d76">{v["heat_mw"]:,.0f} MW</span></div>'
+            f'<div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden">'
             f'<div style="background:{colour};width:{pct:.1f}%;height:100%;border-radius:4px"></div>'
             f'</div></div>'
         )
     return (
-        f'<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:18px">'
-        f'<h3 style="margin:0 0 14px;font-size:1rem;color:#e6edf3">{label}</h3>'
+        f'<div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:10px;padding:18px">'
+        f'<h3 style="margin:0 0 14px;font-size:1rem;color:#1f2328">{label}</h3>'
         + "".join(rows)
-        + f'<div style="margin-top:10px;font-size:0.78rem;color:#8b949e">'
-        f'Total heat: <strong style="color:#58a6ff">{sector_data["total_heat_mw"]:,.0f} MW</strong> | '
-        f'Carbon: <strong style="color:#f85149">{sector_data["carbon_t_h"]:,.0f} tCO₂/h</strong>'
+        + f'<div style="margin-top:10px;font-size:0.78rem;color:#656d76">'
+        f'Total heat: <strong style="color:#0969da">{sector_data["total_heat_mw"]:,.0f} MW</strong> | '
+        f'Carbon: <strong style="color:#cf222e">{sector_data["carbon_t_h"]:,.0f} tCO₂/h</strong>'
         f'</div></div>'
     )
 
@@ -341,10 +425,10 @@ def render_html(
 ) -> str:
     ci_gco2   = carbon.get("gco2_kwh")
     ci_index  = carbon.get("index", "unknown")
-    ci_colour = intensity_colour(ci_index)
+    ci_kg     = round(ci_gco2 / 1000, 3) if ci_gco2 is not None else None
+    ci_colour = co2_colour(ci_kg) if ci_kg is not None else "#656d76"
     temp_str  = f"{weather['temperature_c']}°C" if weather.get("temperature_c") is not None else "N/A"
-    ci_str    = f"{ci_gco2} gCO₂/kWh" if ci_gco2 is not None else "N/A"
-    ci_kgkwh  = (ci_gco2 or 0) / 1000.0
+    ci_str    = f"{ci_kg:.3f} kgCO₂/kWh" if ci_kg is not None else "N/A"
 
     pie  = pie_svg(heat["technologies"], heat["total_heat_mw"])
     dom_chart = bar_chart(heat["domestic"],   "🏠 Domestic")
@@ -355,49 +439,55 @@ def render_html(
     for tech, v in heat["technologies"].items():
         colour = TECH_COLOURS[tech]
         pct = v["heat_mw"] / (heat["total_heat_mw"] or 1) * 100
+        tooltip = (
+            f"Fuel input: {v['fuel_mw']:,.0f} MW&lt;br&gt;"
+            f"Domestic: {v['dom_heat_mw']:,.0f} MW&lt;br&gt;"
+            f"Commercial: {v['com_heat_mw']:,.0f} MW&lt;br&gt;"
+            f"Cost: £{v['cost_gbp_h']:,.0f}/h"
+        )
         tech_cards_html += (
-            f'<div style="background:#161b22;border:1px solid {colour};border-radius:10px;'
-            f'padding:16px;border-left-width:4px">'
+            f'<div data-tooltip="{tooltip}" style="background:#f6f8fa;border:1px solid {colour};border-radius:10px;'
+            f'padding:16px;border-left-width:4px;cursor:default">'
             f'<div style="font-weight:600;color:{colour};margin-bottom:8px">{tech}</div>'
-            f'<div style="font-size:1.4rem;font-weight:700;color:#e6edf3">{v["heat_mw"]:,.0f} <span style="font-size:0.8rem;color:#8b949e">MW</span></div>'
-            f'<div style="font-size:0.78rem;color:#8b949e;margin-top:4px">{pct:.1f}% of total heat</div>'
-            f'<div style="font-size:0.78rem;color:#8b949e;margin-top:4px">'
+            f'<div style="font-size:1.4rem;font-weight:700;color:#1f2328">{v["heat_mw"]:,.0f} <span style="font-size:0.8rem;color:#656d76">MW</span></div>'
+            f'<div style="font-size:0.78rem;color:#656d76;margin-top:4px">{pct:.1f}% of total heat</div>'
+            f'<div style="font-size:0.78rem;color:#656d76;margin-top:4px">'
             f'Carbon: {v["carbon_t_h"]:,.1f} tCO₂/h</div>'
             f'</div>'
         )
 
     # Carbon summary chips
-    def chip(label, value, colour="#58a6ff"):
+    def chip(label, value, colour="#0969da"):
         return (
-            f'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;'
+            f'<div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:8px;'
             f'padding:12px 18px;text-align:center;min-width:130px">'
-            f'<div style="font-size:0.72rem;color:#8b949e;margin-bottom:4px">{label}</div>'
+            f'<div style="font-size:0.72rem;color:#656d76;margin-bottom:4px">{label}</div>'
             f'<div style="font-size:1.1rem;font-weight:700;color:{colour}">{value}</div>'
             f'</div>'
         )
 
     carbon_chips = (
-        chip("Gas CO₂", f"{heat['gas_carbon_t_h']:,.0f} tCO₂/h", "#e3b341")
-        + chip("Elec CO₂", f"{heat['elec_carbon_t_h']:,.1f} tCO₂/h", "#58a6ff")
-        + chip("Total CO₂", f"{heat['total_carbon_t_h']:,.0f} tCO₂/h", "#f85149")
-        + chip("Total Gas", f"{heat['gas_total_mw']:,.0f} MW", "#8b949e")
+        chip("Gas CO₂", f"{heat['gas_carbon_t_h']:,.0f} tCO₂/h", "#bf8700")
+        + chip("Elec CO₂", f"{heat['elec_carbon_t_h']:,.1f} tCO₂/h", "#0969da")
+        + chip("Total CO₂", f"{heat['total_carbon_t_h']:,.0f} tCO₂/h", "#cf222e")
+        + chip("Total Gas", f"{heat['gas_total_mw']:,.0f} MW", "#656d76")
     )
 
     # Info bar chips
-    def info_chip(label, value, colour="#e6edf3"):
+    def info_chip(label, value, colour="#1f2328"):
         return (
-            f'<div style="background:#161b22;border:1px solid #30363d;border-radius:20px;'
+            f'<div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;'
             f'padding:6px 14px;white-space:nowrap">'
-            f'<span style="color:#8b949e;font-size:0.75rem">{label} </span>'
+            f'<span style="color:#656d76;font-size:0.75rem">{label} </span>'
             f'<span style="color:{colour};font-weight:600;font-size:0.85rem">{value}</span>'
             f'</div>'
         )
 
     live_badge = (
-        '<span style="background:#238636;color:#fff;border-radius:12px;'
+        '<span style="background:#1a7f37;color:#fff;border-radius:12px;'
         'padding:2px 8px;font-size:0.7rem;font-weight:600;margin-left:8px">LIVE</span>'
         if gas_live else
-        '<span style="background:#6e7681;color:#fff;border-radius:12px;'
+        '<span style="background:#656d76;color:#fff;border-radius:12px;'
         'padding:2px 8px;font-size:0.7rem;font-weight:600;margin-left:8px">ESTIMATED</span>'
     )
 
@@ -441,9 +531,9 @@ def render_html(
 <title>🔥 GB Heat Demand: Live</title>
 <style>
   :root{{
-    --bg:#0d1117;--surf:#161b22;--bord:#30363d;
-    --txt:#e6edf3;--txt2:#8b949e;
-    --accent:#58a6ff;--green:#3fb950;--orange:#e3b341;--red:#f85149;
+    --bg:#ffffff;--surf:#f6f8fa;--bord:#d0d7de;
+    --txt:#1f2328;--txt2:#656d76;
+    --accent:#0969da;--green:#1a7f37;--orange:#bf8700;--red:#cf222e;
   }}
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}}
@@ -482,7 +572,7 @@ def render_html(
         {"".join(
           f'<div style="display:flex;align-items:center;gap:6px">'
           f'<span style="background:{TECH_COLOURS[t]};width:10px;height:10px;border-radius:50%;display:inline-block"></span>'
-          f'<span style="color:#e6edf3">{t}</span></div>'
+          f'<span style="color:#1f2328">{t}</span></div>'
           for t in TECH_COLOURS
         )}
       </div>
@@ -505,7 +595,7 @@ def render_html(
   <div class="card">
     <h2>Carbon Summary</h2>
     <div class="chips">{carbon_chips}</div>
-    <p style="margin-top:12px;font-size:0.78rem;color:#8b949e">
+    <p style="margin-top:12px;font-size:0.78rem;color:#656d76">
       Grid carbon intensity: <strong style="color:{ci_colour}">{ci_str}</strong>
       ({ci_index}) | Gas emission factor: {GAS_EMISSION} kgCO₂e/kWh
     </p>
@@ -526,13 +616,52 @@ def render_html(
     <ul>{assumptions_html}</ul>
     <p style="margin-top:10px">
       Data sources:
-      <a href="https://data.nationalgas.com/api/3/action/datastore_search?resource_id={NGT_RESOURCE_ID}" target="_blank">NGT LDZ Offtake API</a> ·
+      <a href="https://data.nationalgas.com/apis/instantaneous-flows" target="_blank">National Gas Instantaneous Flow SOAP API</a> ·
       <a href="https://www.gov.uk/government/collections/energy-consumption-in-the-uk" target="_blank">DESNZ Energy Consumption in the UK</a> ·
       <a href="https://api.carbonintensity.org.uk" target="_blank">Carbon Intensity API</a> ·
       <a href="https://www.ofgem.gov.uk/check-if-energy-price-cap-affects-you" target="_blank">Ofgem Price Cap</a>
     </p>
   </details>
 </footer>
+<script>
+(function(){{
+  var tip=document.createElement('div');
+  tip.style.cssText='position:fixed;background:#1f2328;color:#fff;padding:8px 12px;border-radius:8px;'
+    +'font-size:0.8rem;pointer-events:none;display:none;box-shadow:0 4px 12px rgba(0,0,0,.15);'
+    +'z-index:9999;max-width:220px;line-height:1.6;border-top:3px solid #0969da';
+  document.body.appendChild(tip);
+  function show(e,html){{tip.innerHTML=html;tip.style.display='block';move(e);}}
+  function move(e){{
+    var cx=e.clientX||(e.touches&&e.touches[0]&&e.touches[0].clientX)||0;
+    var cy=e.clientY||(e.touches&&e.touches[0]&&e.touches[0].clientY)||0;
+    var x=cx+14,y=cy+14;
+    if(x+230>window.innerWidth)x=cx-230;
+    tip.style.left=x+'px';tip.style.top=y+'px';
+  }}
+  function hide(){{tip.style.display='none';}}
+  document.querySelectorAll('svg path[data-tech]').forEach(function(p){{
+    var tech=p.getAttribute('data-tech');
+    var mw=p.getAttribute('data-mw');
+    var pct=p.getAttribute('data-pct');
+    var col=p.getAttribute('fill');
+    var html='<span style="color:'+col+';font-weight:700">'+tech+'</span><br>'+mw+' MW &nbsp; '+pct+'%';
+    p.addEventListener('mouseover',function(e){{show(e,html);}});
+    p.addEventListener('mousemove',move);
+    p.addEventListener('mouseout',hide);
+    p.addEventListener('touchstart',function(e){{show(e,html);e.preventDefault();}},{{passive:false}});
+  }});
+  document.querySelectorAll('[data-tooltip]').forEach(function(el){{
+    var raw=el.getAttribute('data-tooltip');
+    var html=raw.replace(/&lt;br&gt;/g,'<br>');
+    var col=el.querySelector('[style*="color:"]');
+    var accent=col?col.style.color:'#0969da';
+    el.style.borderTopColor=accent;
+    el.addEventListener('mouseover',function(e){{show(e,html);}});
+    el.addEventListener('mousemove',move);
+    el.addEventListener('mouseout',hide);
+  }});
+}})();
+</script>
 </body>
 </html>"""
 
