@@ -9,29 +9,16 @@ import math
 import os
 import pathlib
 import datetime
-import xml.etree.ElementTree as ET
 import requests
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# National Gas Transmission SOAP API for instantaneous flow data
+# National Gas REST API for instantaneous flow data.
 # No authentication required for this public endpoint.
-SOAP_ENDPOINT = (
-    "https://energywatch.nationalgas.com/EDP-PublicUI/PublicPI/"
-    "InstantaneousFlowWebService.asmx"
-)
-SOAP_ACTION = "http://www.NationalGrid.com/EDP/UI/GetInstantaneousFlowData"
-SOAP_BODY = (
-    '<?xml version="1.0" encoding="utf-8"?>'
-    '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-    ' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
-    ' xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
-    "<soap:Body>"
-    '<GetInstantaneousFlowData xmlns="http://www.NationalGrid.com/EDP/UI/" />'
-    "</soap:Body>"
-    "</soap:Envelope>"
-)
+REST_BASE_URL = "https://api.nationalgas.com/operationaldata/v1"
+REST_FLOW_ENDPOINT = f"{REST_BASE_URL}/instantaneousflow"
+
 # 1 mcm/d → MW
 # Calculation: 1,000,000 m³/day × 39.5 MJ/m³ ÷ (3600 s/h × 24 h/day) = MW
 MCM_D_TO_MW: float = 1_000_000 * 39.5 / 3600 / 24
@@ -41,10 +28,6 @@ LDZ_CODES = {
     "sc", "no", "nw", "ne", "em", "wm",
     "sw", "se", "so", "ts", "wn", "ea", "nt",
 }
-
-# Maximum number of XML elements to look ahead when searching for a value
-# element after a matching name element in the SOAP response.
-_SOAP_LOOKAHEAD = 20
 
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -107,77 +90,86 @@ TECH_COLOURS = {
 # Data fetching
 # ---------------------------------------------------------------------------
 
-def _local_tag(tag: str) -> str:
-    """Strip XML namespace prefix from an ElementTree tag string."""
-    return tag.split("}")[-1] if "}" in tag else tag
-
-
 def fetch_gas_demand_mw() -> tuple[float, bool]:
     """Return (gas_demand_MW, is_live). Falls back to seasonal estimate.
 
-    Calls the National Gas Transmission SOAP API for instantaneous flow data.
+    Calls the National Gas REST API for instantaneous flow data.
     Values are returned in mcm/d and converted to MW via MCM_D_TO_MW.
     """
     try:
-        resp = requests.post(
-            SOAP_ENDPOINT,
-            data=SOAP_BODY.encode("utf-8"),
-            headers={
-                "Content-Type": "text/xml; charset=utf-8",
-                "SOAPAction": SOAP_ACTION,
-            },
-            timeout=20,
-        )
+        resp = requests.get(REST_FLOW_ENDPOINT, timeout=20)
         resp.raise_for_status()
-        root = ET.fromstring(resp.text)
+        payload = resp.json()
 
-        def to_float(text: str | None) -> float | None:
+        def to_float(v) -> float | None:
             try:
-                return float((text or "").strip().replace(",", ""))
+                return float(str(v).strip().replace(",", ""))
             except (ValueError, TypeError):
                 return None
 
-        # Build a flat list of (local_tag, text) pairs for the whole document.
-        flat = [(_local_tag(el.tag), (el.text or "").strip()) for el in root.iter()]
+        # Normalise the response to a flat list of record dicts.
+        # The API may return either a top-level list or an object wrapping a list.
+        records: list = []
+        if isinstance(payload, list):
+            records = payload
+        elif isinstance(payload, dict):
+            for v in payload.values():
+                if isinstance(v, list):
+                    records = v
+                    break
 
-        # Strategy 1: find a "Total Demand" named element then grab the next
-        # Value/Flow element within _SOAP_LOOKAHEAD elements.
-        for i, (tag, text) in enumerate(flat):
-            if ("name" in tag.lower() or "title" in tag.lower()) and (
-                "total" in text.lower() and "demand" in text.lower()
-            ):
-                for j in range(i + 1, min(i + _SOAP_LOOKAHEAD, len(flat))):
-                    jtag, jtext = flat[j]
-                    if "value" in jtag.lower() or "flow" in jtag.lower():
-                        v = to_float(jtext)
-                        if v is not None and v > 0:
-                            return v * MCM_D_TO_MW, True
+        _NAME_KEYS = ("name", "rowName", "RowName", "zone", "type", "label", "description")
+        _VALUE_KEYS = ("value", "flowValue", "FlowValue", "flow", "quantity")
+
+        def get_record_name(record: dict, keys: tuple) -> str:
+            """Return the lowercased value of the first matching key in a record."""
+            for k in keys:
+                if k in record:
+                    return str(record[k]).lower()
+            return ""
+
+        def extract_flow_value(record: dict) -> float | None:
+            """Return the numeric flow value from the first matching key in a record."""
+            for k in _VALUE_KEYS:
+                if k in record:
+                    v = to_float(record[k])
+                    if v is not None:
+                        return v
+            return None
+
+        # Strategy 1: find a record whose name/label indicates "Total Demand".
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = get_record_name(record, _NAME_KEYS)
+            if "total" in name and "demand" in name:
+                v = extract_flow_value(record)
+                if v is not None and v > 0:
+                    return v * MCM_D_TO_MW, True
 
         # Strategy 2: identify individual LDZ zone rows and sum their values.
         ldz_sum = 0.0
         ldz_count = 0
-        for i, (tag, text) in enumerate(flat):
-            if (
-                "name" in tag.lower() or "rowname" in tag.lower()
-            ) and text.lower() in LDZ_CODES:
-                for j in range(i + 1, min(i + 10, len(flat))):
-                    jtag, jtext = flat[j]
-                    if "value" in jtag.lower():
-                        v = to_float(jtext)
-                        if v is not None:
-                            ldz_sum += v
-                            ldz_count += 1
-                            break
+        _LDZ_NAME_KEYS = ("name", "rowName", "RowName", "zone", "ldz", "code")
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = get_record_name(record, _LDZ_NAME_KEYS)
+            if name in LDZ_CODES:
+                v = extract_flow_value(record)
+                if v is not None:
+                    ldz_sum += v
+                    ldz_count += 1
 
         if ldz_count >= 5:  # Require at least 5 LDZs for a valid sum
             return ldz_sum * MCM_D_TO_MW, True
 
         raise ValueError(
-            f"Could not extract demand from SOAP response "
+            f"Could not extract demand from REST API response "
             f"(LDZ zones found: {ldz_count})"
         )
     except Exception as exc:
-        print(f"  SOAP API error ({type(exc).__name__}): {exc}")
+        print(f"  REST API error ({type(exc).__name__}): {exc}")
         month = datetime.datetime.now(datetime.timezone.utc).month
         gw = SEASONAL_FALLBACK_GW[month]
         return gw * 1_000.0, False  # GW → MW
@@ -623,7 +615,7 @@ def render_html(
     <ul>{assumptions_html}</ul>
     <p style="margin-top:10px">
       Data sources:
-      <a href="https://data.nationalgas.com/apis/instantaneous-flows" target="_blank">National Gas Instantaneous Flow SOAP API</a> ·
+      <a href="https://api.nationalgas.com/operationaldata/v1" target="_blank">National Gas Instantaneous Flow REST API</a> ·
       <a href="https://www.gov.uk/government/collections/energy-consumption-in-the-uk" target="_blank">DESNZ Energy Consumption in the UK</a> ·
       <a href="https://api.carbonintensity.org.uk" target="_blank">Carbon Intensity API</a> ·
       <a href="https://www.ofgem.gov.uk/check-if-energy-price-cap-affects-you" target="_blank">Ofgem Price Cap</a>
