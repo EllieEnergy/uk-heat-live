@@ -1,7 +1,6 @@
 # 🔥 GB Heat Demand: Live
 
-A real-time, self-updating static dashboard showing GB building heat demand by technology and sector — the heat equivalent of [grid.iamkate.com](https://grid.iamkate.com/).
-
+A real-time, self-updating static dashboard showing GB building heat demand by technology and sector.
 Live site → **[EllieEnergy.github.io/uk-heat-live](https://EllieEnergy.github.io/uk-heat-live)**
 
 ---
