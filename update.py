@@ -99,10 +99,6 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
         # DEBUG: uncomment to inspect the new API's response shape
         # import pprint; pprint.pprint(payload)
 
-        # ... rest of your parsing logic (Strategies 1 & 2)
-        # The key/field names may differ in the new API —
-        # adjust _NAME_KEYS and _VALUE_KEYS accordingly after inspecting the response.
-
         # Normalise the response to a flat list of record dicts.
         # The API may return either a top-level list or an object wrapping a list.
         records: list = []
@@ -114,6 +110,12 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                     records = v
                     break
 
+        def to_float(x) -> float | None:
+            try:
+                return float(str(x).strip().replace(",", ""))
+            except (TypeError, ValueError):
+                return None
+
         _NAME_KEYS = ("name", "rowName", "RowName", "zone", "type", "label", "description")
         _VALUE_KEYS = ("value", "flowValue", "FlowValue", "flow", "quantity")
 
@@ -124,6 +126,51 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                     return str(record[k]).lower()
             return ""
 
+        def extract_flow_value(record: dict) -> float | None:
+            """Return the numeric flow value from the first matching key in a record."""
+            for k in _VALUE_KEYS:
+                if k in record:
+                    v = to_float(record[k])
+                    if v is not None:
+                        return v
+            return None
+
+        # Strategy 1: find a record whose name/label indicates "Total Demand".
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = get_record_name(record, _NAME_KEYS)
+            if "total" in name and "demand" in name:
+                v = extract_flow_value(record)
+                if v is not None and v > 0:
+                    return v * MCM_D_TO_MW, True
+
+        # Strategy 2: identify individual LDZ zone rows and sum their values.
+        ldz_sum = 0.0
+        ldz_count = 0
+        _LDZ_NAME_KEYS = ("name", "rowName", "RowName", "zone", "ldz", "code")
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = get_record_name(record, _LDZ_NAME_KEYS)
+            if name in LDZ_CODES:
+                v = extract_flow_value(record)
+                if v is not None:
+                    ldz_sum += v
+                    ldz_count += 1
+
+        if ldz_count >= 5:  # Require at least 5 LDZs for a valid sum
+            return ldz_sum * MCM_D_TO_MW, True
+
+        raise ValueError(
+            f"Could not extract demand from REST API response "
+            f"(LDZ zones found: {ldz_count})"
+        )
+    except Exception as exc:
+        print(f"  REST API error ({type(exc).__name__}): {exc}")
+        month = datetime.datetime.now(datetime.timezone.utc).month
+        gw = SEASONAL_FALLBACK_GW[month]
+        return gw * 1_000.0, False  # GW → MW
         def extract_flow_value(record: dict) -> float | None:
             """Return the numeric flow value from the first matching key in a record."""
             for k in _VALUE_KEYS:
