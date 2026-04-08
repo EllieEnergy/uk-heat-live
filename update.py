@@ -426,8 +426,8 @@ def render_html(
     ci_str    = f"{ci_kg:.3f} kgCO₂/kWh" if ci_kg is not None else "N/A"
 
     pie  = pie_svg(heat["technologies"], heat["total_heat_mw"])
-    dom_chart = bar_chart(heat["domestic"],   "🏠 Domestic")
-    com_chart = bar_chart(heat["commercial"], "🏢 Commercial / Public")
+    dom_chart = bar_chart(heat["domestic"],   "Domestic")
+    com_chart = bar_chart(heat["commercial"], "Commercial / Public")
 
     # Tech cards
     tech_cards_html = ""
@@ -488,8 +488,8 @@ def render_html(
 
     info_bar = (
         info_chip("🌡 Temp", temp_str)
-        + info_chip("⛽ Gas", f"{GAS_COST_P}p/kWh")
-        + info_chip("⚡ Elec", f"{ELEC_COST_P}p/kWh")
+        + info_chip("Gas", f"{GAS_COST_P}p/kWh")
+        + info_chip("Elec", f"{ELEC_COST_P}p/kWh")
         + info_chip("Gas CO₂", f"{GAS_EMISSION} kg/kWh")
         + info_chip("Grid CO₂", ci_str, ci_colour)
         + info_chip("Boiler efficiency", "80%")
@@ -523,7 +523,7 @@ def render_html(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>🔥 GB Heat Demand: Live</title>
+<title>UK Heat Demand: Live</title>
 <style>
   :root{{
     --bg:#ffffff;--surf:#f6f8fa;--bord:#d0d7de;
@@ -552,7 +552,7 @@ def render_html(
 </head>
 <body>
 <header>
-  <h1>🔥 GB Heat Demand: Live{live_badge}</h1>
+  <h1>UK Heat Demand: Live{live_badge}</h1>
   <span class="ts">Updated: {timestamp} UTC</span>
 </header>
 <div class="info-bar">{info_bar}</div>
@@ -600,7 +600,7 @@ def render_html(
 
 <footer>
   <p>
-    Real-time GB gas transmission demand decomposed into domestic and commercial heat supply technologies.
+    Real-time UK gas transmission demand decomposed into domestic and commercial heat supply technologies.
     Gas data: <a href="https://data.nationalgas.com" target="_blank">National Gas Transmission Data Portal</a>.
     Weather: <a href="https://open-meteo.com" target="_blank">Open-Meteo</a>.
     Carbon intensity: <a href="https://carbonintensity.org.uk" target="_blank">National Grid ESO Carbon Intensity API</a>.
