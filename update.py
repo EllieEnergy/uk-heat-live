@@ -17,7 +17,7 @@ import requests
 # National Gas REST API for instantaneous flow data.
 # No authentication required for this public endpoint.
 REST_BASE_URL = "https://api.nationalgas.com/operationaldata/v1"
-REST_FLOW_ENDPOINT = f"{REST_BASE_URL}/instantaneousflow"
+REST_FLOW_ENDPOINT = "https://apideveloper.nationalgas.com/publications/instantaneousflow/latest"
 
 # 1 mcm/d → MW
 # Calculation: 1,000,000 m³/day × 39.5 MJ/m³ ÷ (3600 s/h × 24 h/day) = MW
@@ -91,21 +91,17 @@ TECH_COLOURS = {
 # ---------------------------------------------------------------------------
 
 def fetch_gas_demand_mw() -> tuple[float, bool]:
-    """Return (gas_demand_MW, is_live). Falls back to seasonal estimate.
-
-    Calls the National Gas REST API for instantaneous flow data.
-    Values are returned in mcm/d and converted to MW via MCM_D_TO_MW.
-    """
     try:
         resp = requests.get(REST_FLOW_ENDPOINT, timeout=20)
         resp.raise_for_status()
         payload = resp.json()
 
-        def to_float(v) -> float | None:
-            try:
-                return float(str(v).strip().replace(",", ""))
-            except (ValueError, TypeError):
-                return None
+        # DEBUG: uncomment to inspect the new API's response shape
+        # import pprint; pprint.pprint(payload)
+
+        # ... rest of your parsing logic (Strategies 1 & 2)
+        # The key/field names may differ in the new API —
+        # adjust _NAME_KEYS and _VALUE_KEYS accordingly after inspecting the response.
 
         # Normalise the response to a flat list of record dicts.
         # The API may return either a top-level list or an object wrapping a list.
