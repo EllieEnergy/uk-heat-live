@@ -570,7 +570,7 @@ def render_html(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>UK Heat Demand: Live</title>
+<title>UK Heat: Live</title>
 <style>
   :root{{
     --bg:#ffffff;--surf:#f6f8fa;--bord:#d0d7de;
@@ -599,7 +599,7 @@ def render_html(
 </head>
 <body>
 <header>
-  <h1>UK Heat Demand: Live{live_badge}</h1>
+  <h1>UK Heat: Live{live_badge}</h1>
   <span class="ts">Updated: {timestamp} UTC</span>
 </header>
 <div class="info-bar">{info_bar}</div>
