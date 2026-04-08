@@ -32,8 +32,19 @@ SOAP_BODY = (
     "</soap:Body>"
     "</soap:Envelope>"
 )
-# 1 mcm/d → MW  (calorific value of natural gas: 39.5 MJ/m³)
+# 1 mcm/d → MW
+# Calculation: 1,000,000 m³/day × 39.5 MJ/m³ ÷ (3600 s/h × 24 h/day) = MW
 MCM_D_TO_MW: float = 1_000_000 * 39.5 / 3600 / 24
+
+# All 13 GB Local Distribution Zones; requiring ≥5 guards against partial responses.
+LDZ_CODES = {
+    "sc", "no", "nw", "ne", "em", "wm",
+    "sw", "se", "so", "ts", "wn", "ea", "nt",
+}
+
+# Maximum number of XML elements to look ahead when searching for a value
+# element after a matching name element in the SOAP response.
+_SOAP_LOOKAHEAD = 20
 
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -130,12 +141,12 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
         flat = [(_local_tag(el.tag), (el.text or "").strip()) for el in root.iter()]
 
         # Strategy 1: find a "Total Demand" named element then grab the next
-        # Value/Flow element within a short look-ahead window.
+        # Value/Flow element within _SOAP_LOOKAHEAD elements.
         for i, (tag, text) in enumerate(flat):
             if ("name" in tag.lower() or "title" in tag.lower()) and (
                 "total" in text.lower() and "demand" in text.lower()
             ):
-                for j in range(i + 1, min(i + 20, len(flat))):
+                for j in range(i + 1, min(i + _SOAP_LOOKAHEAD, len(flat))):
                     jtag, jtext = flat[j]
                     if "value" in jtag.lower() or "flow" in jtag.lower():
                         v = to_float(jtext)
@@ -143,10 +154,6 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                             return v * MCM_D_TO_MW, True
 
         # Strategy 2: identify individual LDZ zone rows and sum their values.
-        LDZ_CODES = {
-            "sc", "no", "nw", "ne", "em", "wm",
-            "sw", "se", "so", "ts", "wn", "ea", "nt",
-        }
         ldz_sum = 0.0
         ldz_count = 0
         for i, (tag, text) in enumerate(flat):
@@ -162,7 +169,7 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                             ldz_count += 1
                             break
 
-        if ldz_count >= 5:
+        if ldz_count >= 5:  # Require at least 5 LDZs for a valid sum
             return ldz_sum * MCM_D_TO_MW, True
 
         raise ValueError(
@@ -632,8 +639,8 @@ def render_html(
   document.body.appendChild(tip);
   function show(e,html){{tip.innerHTML=html;tip.style.display='block';move(e);}}
   function move(e){{
-    var cx=e.clientX||(e.touches&&e.touches[0]&&e.touches[0].clientX)||0;
-    var cy=e.clientY||(e.touches&&e.touches[0]&&e.touches[0].clientY)||0;
+    var cx=e.clientX||0;
+    var cy=e.clientY||0;
     var x=cx+14,y=cy+14;
     if(x+230>window.innerWidth)x=cx-230;
     tip.style.left=x+'px';tip.style.top=y+'px';
@@ -648,14 +655,11 @@ def render_html(
     p.addEventListener('mouseover',function(e){{show(e,html);}});
     p.addEventListener('mousemove',move);
     p.addEventListener('mouseout',hide);
-    p.addEventListener('touchstart',function(e){{show(e,html);e.preventDefault();}},{{passive:false}});
+    p.addEventListener('touchend',function(e){{show(e,html);}});
   }});
   document.querySelectorAll('[data-tooltip]').forEach(function(el){{
     var raw=el.getAttribute('data-tooltip');
     var html=raw.replace(/&lt;br&gt;/g,'<br>');
-    var col=el.querySelector('[style*="color:"]');
-    var accent=col?col.style.color:'#0969da';
-    el.style.borderTopColor=accent;
     el.addEventListener('mouseover',function(e){{show(e,html);}});
     el.addEventListener('mousemove',move);
     el.addEventListener('mouseout',hide);
