@@ -407,8 +407,8 @@ def render_html(
         + info_chip("⚡ Elec", f"{ELEC_COST_P}p/kWh")
         + info_chip("Gas CO₂", f"{GAS_EMISSION} kg/kWh")
         + info_chip("Grid CO₂", ci_str, ci_colour)
-        + info_chip("Boiler eff", "1∶0.8")
-        + info_chip("HP COP", "1∶3")
+        + info_chip("Boiler efficiency", "80%")
+        + info_chip("Heat Pump COP", "3.0")
     )
 
     assumptions_html = "".join(
