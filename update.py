@@ -55,10 +55,10 @@ COM_DHW_FRAC   = 0.25   # A5: non-domestic DHW fraction
 # A6: Domestic technology mix (fractions of domestic gas heat fuel)
 DOM_MIX = {
     "Gas Boiler":       0.85,
-    "Heat Pump":        0.025,
-    "Heat Network":     0.025,
-    "Direct Electric":  0.02,
-    "Oil/Other":        0.08,
+    "Heat Pump":        0.025, # Amend to only reflect electric, however scale based on at time gas use
+    "Heat Network":     0.025, # Amend to reflect electric HP and GAS (CHP, GB etc.), however scale based on at time gas use
+    "Direct Electric":  0.02,  # Not linked to gas, however scale based on at time gas use
+    "Oil/Other":        0.08,  # Not linked to gas, however scale based on at time gas use
 }
 # A7: Commercial technology mix
 COM_MIX = {
@@ -281,7 +281,7 @@ def compute_heat(gas_total_mw: float, elec_ci_gco2_kwh: float | None) -> dict:
                 elec_f = fuel
                 carbon = elec_f * elec_emission
                 cost = elec_f * ELEC_COST_P * 10
-            elif tech == "Heat Network":
+            elif tech == "Heat Network":            # amend to consider electric heat pumps
                 heat = fuel * (1 - HN_LOSS)
                 gas_f = fuel
                 elec_f = 0.0
