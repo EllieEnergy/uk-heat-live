@@ -17,7 +17,7 @@ import requests
 # National Gas REST API for instantaneous flow data.
 # No authentication required for this public endpoint.
 REST_BASE_URL = "https://api.nationalgas.com/operationaldata/v1"
-REST_FLOW_ENDPOINT = "https://apideveloper.nationalgas.com/publications/instantaneousflow/latest"
+REST_FLOW_ENDPOINT = "https://api.nationalgas.com/operationaldata/v1/instantaneousflow/latest"
 
 # 1 mcm/d → MW
 # Calculation: 1,000,000 m³/day × 39.5 MJ/m³ ÷ (3600 s/h × 24 h/day) = MW
