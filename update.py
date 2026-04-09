@@ -101,117 +101,46 @@ TECH_COLOURS = {
 # ---------------------------------------------------------------------------
 
 def fetch_gas_demand_mw() -> tuple[float, bool]:
-    categories: list = []
-    sub_items: list = []
     urls_tried: list = []
 
-    try:
-        result = _fetch_gas_demand_inner(categories, sub_items, urls_tried)
-        if result is not None:
-            return result
-    except Exception as exc:
-        print(f"  REST API error ({type(exc).__name__}): {exc}")
+    def find_demand_items(demand_category: dict) -> list[dict]:
+        """Recursively search the demand category object for data items with IDs."""
+        items = []
 
-    # ------------------------------------------------------------------
-    # Fallback — log diagnostics and return a seasonal estimate.
-    # ------------------------------------------------------------------
-    print(f"  FALLBACK: Using seasonal estimate. Catalogue categories found: {categories}")
-    print(f"  Demand sub-items found: {sub_items}")
-    print(f"  URLs tried: {urls_tried}")
-    month = datetime.datetime.now(datetime.timezone.utc).month
-    gw = SEASONAL_FALLBACK_GW[month]
-    return gw * 1_000.0, False  # GW → MW
+        # Print the full structure for debugging
+        print(f"  [gas] Demand category keys: {list(demand_category.keys())}")
+        print(f"  [gas] Demand category (first 2000 chars): {str(demand_category)[:2000]}")
 
+        # Look for nested lists that might contain data items
+        for key in demand_category:
+            val = demand_category[key]
+            if isinstance(val, list) and val:
+                print(f"  [gas] Found list under key '{key}' with {len(val)} items")
+                if isinstance(val[0], dict):
+                    print(f"  [gas]   First item keys: {list(val[0].keys())}")
+                    print(f"  [gas]   First item: {str(val[0])[:500]}")
+                items.extend(v for v in val if isinstance(v, dict))
+            elif isinstance(val, dict):
+                # Could be a nested object containing more lists
+                for subkey, subval in val.items():
+                    if isinstance(subval, list) and subval:
+                        print(f"  [gas] Found nested list under '{key}.{subkey}' with {len(subval)} items")
+                        if isinstance(subval[0], dict):
+                            print(f"  [gas]   First item keys: {list(subval[0].keys())}")
+                        items.extend(v for v in subval if isinstance(v, dict))
 
-def _fetch_gas_demand_inner(
-    categories: list, sub_items: list, urls_tried: list
-) -> "tuple[float, bool] | None":
-    """Inner implementation of fetch_gas_demand_mw(); mutates the diagnostic lists.
+        return items
 
-    Returns a ``(mw, live)`` pair on success, or ``None`` if no value could be
-    extracted (triggering the seasonal fallback in the caller).
-    """
-    # ------------------------------------------------------------------
-    # Step 1 — Get top-level categories from the catalogue.
-    # The catalogue returns categories (e.g. "demand", "supplies") with
-    # id=None; we must drill into the "demand" category separately.
-    # ------------------------------------------------------------------
-    cat_resp = requests.get(CATALOGUE_URL, timeout=20)
-    cat_resp.raise_for_status()
-    catalogue = cat_resp.json()
-
-    # Normalise catalogue to a flat list of category objects.
-    cat_list: list = []
-    if isinstance(catalogue, list):
-        cat_list = catalogue
-    elif isinstance(catalogue, dict):
-        for v in catalogue.values():
-            if isinstance(v, list):
-                cat_list = v
-                break
-
-    _TEXT_KEYS = ("text", "name", "label", "description", "title", "category")
-
-    def item_text(item: dict) -> str:
-        for k in _TEXT_KEYS:
-            if k in item:
-                return str(item[k]).lower().strip()
-        return ""
-
-    categories[:] = [item_text(c) for c in cat_list if isinstance(c, dict)]
-    print(f"  [gas] Catalogue categories found: {categories}")
-
-    # ------------------------------------------------------------------
-    # Step 2 — Drill into the "demand" category to find sub-publications.
-    # Try candidate URL patterns in order; use the first that returns 200.
-    # ------------------------------------------------------------------
-    candidate_urls = [
-        f"{REST_BASE}/publications/catalogue/demand",
-        f"{REST_BASE}/publications/demand",
-        f"{REST_BASE}/publications/catalogue?category=demand",
-        f"{REST_BASE}/demand",
-    ]
-
-    demand_payload = None
-    for url in candidate_urls:
-        urls_tried.append(url)
+    def to_float(x) -> float | None:
         try:
-            resp = requests.get(url, timeout=20)
-            print(f"  [gas] {resp.status_code} from {url}")
-            if resp.status_code == 200:
-                demand_payload = resp.json()
-                print("  [gas] Demand sub-catalogue response (first 500 chars):")
-                print(str(demand_payload)[:500])
-                break
-        except Exception as url_exc:
-            print(f"  [gas] Error fetching {url}: {url_exc}")
-
-    # Normalise sub-catalogue to a flat list.
-    sub_list: list = []
-    if demand_payload is not None:
-        if isinstance(demand_payload, list):
-            sub_list = demand_payload
-        elif isinstance(demand_payload, dict):
-            for v in demand_payload.values():
-                if isinstance(v, list):
-                    sub_list = v
-                    break
+            return float(str(x).strip().replace(",", ""))
+        except (TypeError, ValueError):
+            return None
 
     _ID_KEYS = (
         "id", "publicationId", "publicationID", "publication_id",
         "dataItemId", "itemId",
     )
-    _PUB_NAME_KEYS = (
-        "publicationObjectName", "dataItemName", "name", "description",
-        "label", "title", "text",
-    )
-
-    def pub_text(pub: dict) -> str:
-        parts = []
-        for k in _PUB_NAME_KEYS:
-            if k in pub:
-                parts.append(str(pub[k]).lower())
-        return " ".join(parts)
 
     def pub_id(pub: dict) -> str | None:
         for k in _ID_KEYS:
@@ -220,37 +149,6 @@ def _fetch_gas_demand_inner(
                 if val is not None:
                     return str(val)
         return None
-
-    sub_items[:] = [pub_text(s) for s in sub_list if isinstance(s, dict)]
-    print(f"  [gas] Demand sub-items found ({len(sub_list)}):")
-    for item in sub_list:
-        if isinstance(item, dict):
-            print(f"    id={pub_id(item)!r}  text={pub_text(item)!r}")
-
-    # Keywords that suggest an item contains demand data.
-    _DEMAND_KEYWORDS = (
-        "total", "nts", "instantaneous", "ldz", "offtake",
-        "actual", "physical", "demand",
-    )
-
-    # Collect candidate items (those whose text matches a keyword).
-    candidate_items = [
-        item for item in sub_list
-        if isinstance(item, dict)
-        and any(kw in pub_text(item) for kw in _DEMAND_KEYWORDS)
-    ]
-    # If nothing matches, try all items.
-    if not candidate_items:
-        candidate_items = [i for i in sub_list if isinstance(i, dict)]
-
-    # ------------------------------------------------------------------
-    # Step 3 — Fetch data for each candidate item and attempt to parse.
-    # ------------------------------------------------------------------
-    def to_float(x) -> float | None:
-        try:
-            return float(str(x).strip().replace(",", ""))
-        except (TypeError, ValueError):
-            return None
 
     _NAME_KEYS = (
         "name", "rowName", "RowName", "zone", "type", "label",
@@ -330,54 +228,132 @@ def _fetch_gas_demand_inner(
 
         return None
 
-    # First, check if the demand_payload itself is already a data response
-    # (i.e., it contains inline records rather than sub-publications).
-    if demand_payload is not None:
-        inline_records: list = []
-        if isinstance(demand_payload, list):
-            inline_records = demand_payload
-        elif isinstance(demand_payload, dict):
-            for v in demand_payload.values():
+    try:
+        # ------------------------------------------------------------------
+        # Step 1 — Fetch the catalogue and locate the "demand" category object.
+        # ------------------------------------------------------------------
+        cat_resp = requests.get(CATALOGUE_URL, timeout=20)
+        print(f"  [gas] {cat_resp.status_code} from {CATALOGUE_URL}")
+        cat_resp.raise_for_status()
+        catalogue = cat_resp.json()
+
+        print(f"  [gas] Catalogue top-level keys: {list(catalogue.keys()) if isinstance(catalogue, dict) else type(catalogue).__name__}")
+        print(f"  [gas] Catalogue (first 2000 chars): {str(catalogue)[:2000]}")
+
+        # Normalise catalogue to a flat list of category objects.
+        cat_list: list = []
+        if isinstance(catalogue, list):
+            cat_list = catalogue
+        elif isinstance(catalogue, dict):
+            for v in catalogue.values():
                 if isinstance(v, list):
-                    inline_records = v
+                    cat_list = v
                     break
-        result = try_parse_records(inline_records)
-        if result is not None:
-            return result
 
-    # Then try fetching data URLs for each candidate sub-item.
-    for item in candidate_items:
-        item_id = pub_id(item)
-        if not item_id:
-            continue
-        data_urls = [
-            f"{REST_BASE}/publications/{item_id}/data?latestFlag=Y",
-            f"{REST_BASE}/publications/{item_id}/latest",
-            f"{REST_BASE}/publications/{item_id}",
-        ]
-        for url in data_urls:
-            urls_tried.append(url)
-            try:
-                resp = requests.get(url, timeout=20)
-                print(f"  [gas] {resp.status_code} from {url}")
-                if resp.status_code == 200:
-                    print(f"  [gas] Response (first 500 chars): {resp.text[:500]}")
-                    payload = resp.json()
-                    records: list = []
-                    if isinstance(payload, list):
-                        records = payload
-                    elif isinstance(payload, dict):
-                        for v in payload.values():
-                            if isinstance(v, list):
-                                records = v
-                                break
-                    result = try_parse_records(records)
-                    if result is not None:
-                        return result
-            except Exception as url_exc:
-                print(f"  [gas] Error fetching {url}: {url_exc}")
+        _TEXT_KEYS = ("text", "name", "label", "description", "title", "category")
 
-    return None
+        def item_text(item: dict) -> str:
+            for k in _TEXT_KEYS:
+                if k in item:
+                    return str(item[k]).lower().strip()
+            return ""
+
+        categories = [item_text(c) for c in cat_list if isinstance(c, dict)]
+        print(f"  [gas] Catalogue categories found: {categories}")
+
+        # Find the "demand" category object.
+        demand_cat: dict | None = None
+        for cat in cat_list:
+            if isinstance(cat, dict) and item_text(cat) == "demand":
+                demand_cat = cat
+                break
+
+        if demand_cat is None:
+            print("  [gas] WARNING: 'demand' category not found in catalogue")
+            print(f"  [gas] All category objects: {cat_list}")
+        else:
+            print(f"  [gas] Found 'demand' category object")
+
+            # ------------------------------------------------------------------
+            # Step 2 — Explore the demand category object's structure.
+            # ------------------------------------------------------------------
+            demand_items = find_demand_items(demand_cat)
+
+            # Filter to items that have a non-None ID.
+            items_with_ids = [item for item in demand_items if pub_id(item) is not None]
+            print(f"  [gas] Demand items with IDs found: {len(items_with_ids)}")
+            for item in items_with_ids:
+                print(f"    id={pub_id(item)!r}  keys={list(item.keys())}")
+
+            # ------------------------------------------------------------------
+            # Step 3 — Try fetching data for each item with an ID.
+            # ------------------------------------------------------------------
+            # Keywords that suggest an item contains demand data.
+            _DEMAND_KEYWORDS = (
+                "total", "nts", "instantaneous", "ldz", "offtake",
+                "actual", "physical", "demand",
+            )
+
+            # Prefer items matching demand keywords; fall back to all items.
+            _PUB_NAME_KEYS = (
+                "publicationObjectName", "dataItemName", "name", "description",
+                "label", "title", "text",
+            )
+
+            def pub_text(pub: dict) -> str:
+                parts = []
+                for k in _PUB_NAME_KEYS:
+                    if k in pub:
+                        parts.append(str(pub[k]).lower())
+                return " ".join(parts)
+
+            candidate_items = [
+                item for item in items_with_ids
+                if any(kw in pub_text(item) for kw in _DEMAND_KEYWORDS)
+            ]
+            if not candidate_items:
+                candidate_items = items_with_ids
+
+            for item in candidate_items:
+                item_id = pub_id(item)
+                data_urls = [
+                    f"{REST_BASE}/publications/{item_id}/data?latestFlag=Y",
+                    f"{REST_BASE}/publications/{item_id}/latest",
+                    f"{REST_BASE}/publications/{item_id}",
+                ]
+                for url in data_urls:
+                    urls_tried.append(url)
+                    try:
+                        resp = requests.get(url, timeout=20)
+                        print(f"  [gas] {resp.status_code} from {url}")
+                        if resp.status_code == 200:
+                            print(f"  [gas] Response (first 500 chars): {resp.text[:500]}")
+                            payload = resp.json()
+                            records: list = []
+                            if isinstance(payload, list):
+                                records = payload
+                            elif isinstance(payload, dict):
+                                for v in payload.values():
+                                    if isinstance(v, list):
+                                        records = v
+                                        break
+                            result = try_parse_records(records)
+                            if result is not None:
+                                return result
+                    except Exception as url_exc:
+                        print(f"  [gas] Error fetching {url}: {url_exc}")
+
+    except Exception as exc:
+        print(f"  REST API error ({type(exc).__name__}): {exc}")
+
+    # ------------------------------------------------------------------
+    # Step 5 — Fall back to seasonal estimate with detailed logging.
+    # ------------------------------------------------------------------
+    print(f"  FALLBACK: Using seasonal estimate.")
+    print(f"  URLs tried: {urls_tried}")
+    month = datetime.datetime.now(datetime.timezone.utc).month
+    gw = SEASONAL_FALLBACK_GW[month]
+    return gw * 1_000.0, False  # GW → MW
 
 
 def fetch_weather() -> dict:
