@@ -9,15 +9,16 @@ import math
 import os
 import pathlib
 import datetime
+import pprint
 import requests
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# National Gas REST API for instantaneous flow data.
-# No authentication required for this public endpoint.
-REST_BASE_URL = "https://api.nationalgas.com/operationaldata/v1"
-REST_FLOW_ENDPOINT = "https://api.nationalgas.com/operationaldata/v1/instantaneousflow/latest"
+# National Gas REST API — catalogue-based discovery.
+# No authentication required (open data policy).
+REST_BASE = "https://api.nationalgas.com/operationaldata/v1"
+CATALOGUE_URL = f"{REST_BASE}/publications/catalogue"
 
 # 1 mcm/d → MW
 # Calculation: 1,000,000 m³/day × 39.5 MJ/m³ ÷ (3600 s/h × 24 h/day) = MW
@@ -27,6 +28,15 @@ MCM_D_TO_MW: float = 1_000_000 * 39.5 / 3600 / 24
 LDZ_CODES = {
     "sc", "no", "nw", "ne", "em", "wm",
     "sw", "se", "so", "ts", "wn", "ea", "nt",
+}
+
+# Map from full LDZ region names (as the REST API may return them) to 2-letter codes.
+LDZ_NAME_MAP = {
+    "scotland": "sc", "northern": "no", "north west": "nw",
+    "north east": "ne", "east midlands": "em", "west midlands": "wm",
+    "south west": "sw", "south east": "se", "southern": "so",
+    "thames": "ts", "wales north": "wn", "wales": "wn",  # "wales" is a fallback alias for "wn"
+    "eastern": "ea", "north thames": "nt",
 }
 
 OPEN_METEO_URL = (
@@ -92,15 +102,111 @@ TECH_COLOURS = {
 
 def fetch_gas_demand_mw() -> tuple[float, bool]:
     try:
-        resp = requests.get(REST_FLOW_ENDPOINT, timeout=20)
-        resp.raise_for_status()
-        payload = resp.json()
+        # ------------------------------------------------------------------
+        # Step 1 — Discover publication IDs from the catalogue.
+        # ------------------------------------------------------------------
+        cat_resp = requests.get(CATALOGUE_URL, timeout=20)
+        cat_resp.raise_for_status()
+        catalogue = cat_resp.json()
 
-        # DEBUG: uncomment to inspect the new API's response shape
-        # import pprint; pprint.pprint(payload)
+        print("  [gas] Full catalogue response:")
+        pprint.pprint(catalogue)
 
-        # Normalise the response to a flat list of record dicts.
-        # The API may return either a top-level list or an object wrapping a list.
+        # Normalise catalogue to a flat list of publication objects.
+        pub_list: list = []
+        if isinstance(catalogue, list):
+            pub_list = catalogue
+        elif isinstance(catalogue, dict):
+            for v in catalogue.values():
+                if isinstance(v, list):
+                    pub_list = v
+                    break
+
+        # Keywords that suggest a publication contains demand data.
+        _DEMAND_KEYWORDS = (
+            "instantaneous flow", "demand", "ldz", "offtake",
+            "total demand", "nts demand", "category demand",
+        )
+        _ID_KEYS = ("id", "publicationId", "publicationID", "publication_id")
+        _PUB_NAME_KEYS = (
+            "publicationObjectName", "name", "description", "label", "title",
+        )
+
+        def pub_text(pub: dict) -> str:
+            parts = []
+            for k in _PUB_NAME_KEYS:
+                if k in pub:
+                    parts.append(str(pub[k]).lower())
+            return " ".join(parts)
+
+        def pub_id(pub: dict) -> str | None:
+            for k in _ID_KEYS:
+                if k in pub:
+                    return str(pub[k])
+            return None
+
+        print(f"  [gas] {len(pub_list)} catalogue entries found:")
+        for pub in pub_list:
+            print(f"    id={pub_id(pub)!r}  text={pub_text(pub)!r}")
+
+        # Choose the best matching publication.
+        chosen_id: str | None = None
+        for pub in pub_list:
+            text = pub_text(pub)
+            if any(kw in text for kw in _DEMAND_KEYWORDS):
+                chosen_id = pub_id(pub)
+                if chosen_id:
+                    print(f"  [gas] Chosen publication id={chosen_id!r}  ({text!r})")
+                    break
+
+        if not chosen_id:
+            raise ValueError(
+                "No demand-related publication found in catalogue. "
+                f"Entries: {[pub_text(p) for p in pub_list]}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 2 — Fetch the latest data for the chosen publication.
+        # Try multiple URL patterns with fallback.
+        # ------------------------------------------------------------------
+        url_patterns = [
+            f"{REST_BASE}/publications/{chosen_id}/latest",
+            f"{REST_BASE}/publications/{chosen_id}?latestFlag=Y",
+            f"{REST_BASE}/publications/{chosen_id}/data?latestFlag=Y",
+            f"{REST_BASE}/publications/{chosen_id}",
+        ]
+
+        payload = None
+        for url in url_patterns:
+            try:
+                resp = requests.get(url, timeout=20)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    print(f"  [gas] Data fetched from {url}")
+                    print("  [gas] First few records:")
+                    if isinstance(payload, list):
+                        records_preview = payload
+                    elif isinstance(payload, dict):
+                        records_preview = next(
+                            (v for v in payload.values() if isinstance(v, list)), []
+                        )
+                    else:
+                        records_preview = []
+                    pprint.pprint(records_preview[:5])
+                    break
+                print(f"  [gas] {resp.status_code} from {url}")
+            except Exception as url_exc:
+                print(f"  [gas] Error fetching {url}: {url_exc}")
+
+        if payload is None:
+            raise ValueError(
+                f"Could not fetch data for publication {chosen_id!r} "
+                f"from any URL pattern."
+            )
+
+        # ------------------------------------------------------------------
+        # Step 3 — Parse the response.
+        # ------------------------------------------------------------------
         records: list = []
         if isinstance(payload, list):
             records = payload
@@ -116,18 +222,23 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
             except (TypeError, ValueError):
                 return None
 
-        _NAME_KEYS = ("name", "rowName", "RowName", "zone", "type", "label", "description")
-        _VALUE_KEYS = ("value", "flowValue", "FlowValue", "flow", "quantity")
+        _NAME_KEYS = (
+            "name", "rowName", "RowName", "zone", "type", "label",
+            "description", "siteName", "category", "publicationObjectName",
+            "dataItemName",
+        )
+        _VALUE_KEYS = (
+            "value", "flowValue", "FlowValue", "flow", "quantity",
+            "instantaneousFlow", "operationalValue",
+        )
 
-        def get_record_name(record: dict, keys: tuple) -> str:
-            """Return the lowercased value of the first matching key in a record."""
-            for k in keys:
+        def get_record_name(record: dict) -> str:
+            for k in _NAME_KEYS:
                 if k in record:
-                    return str(record[k]).lower()
+                    return str(record[k]).lower().strip()
             return ""
 
         def extract_flow_value(record: dict) -> float | None:
-            """Return the numeric flow value from the first matching key in a record."""
             for k in _VALUE_KEYS:
                 if k in record:
                     v = to_float(record[k])
@@ -135,82 +246,61 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                         return v
             return None
 
-        # Strategy 1: find a record whose name/label indicates "Total Demand".
+        # Strategy 1: find a record whose name indicates total demand.
         for record in records:
             if not isinstance(record, dict):
                 continue
-            name = get_record_name(record, _NAME_KEYS)
+            name = get_record_name(record)
             if "total" in name and "demand" in name:
                 v = extract_flow_value(record)
                 if v is not None and v > 0:
                     return v * MCM_D_TO_MW, True
 
-        # Strategy 2: identify individual LDZ zone rows and sum their values.
+        # Strategy 2: sum individual LDZ offtake rows.
+        # Match by 2-letter code OR by full region name patterns.
         ldz_sum = 0.0
-        ldz_count = 0
-        _LDZ_NAME_KEYS = ("name", "rowName", "RowName", "zone", "ldz", "code")
+        ldz_found: set = set()
+
         for record in records:
             if not isinstance(record, dict):
                 continue
-            name = get_record_name(record, _LDZ_NAME_KEYS)
+            name = get_record_name(record)
+
+            # Direct 2-letter code match.
             if name in LDZ_CODES:
                 v = extract_flow_value(record)
                 if v is not None:
                     ldz_sum += v
-                    ldz_count += 1
-
-        if ldz_count >= 5:  # Require at least 5 LDZs for a valid sum
-            return ldz_sum * MCM_D_TO_MW, True
-
-        raise ValueError(
-            f"Could not extract demand from REST API response "
-            f"(LDZ zones found: {ldz_count})"
-        )
-    except Exception as exc:
-        print(f"  REST API error ({type(exc).__name__}): {exc}")
-        month = datetime.datetime.now(datetime.timezone.utc).month
-        gw = SEASONAL_FALLBACK_GW[month]
-        return gw * 1_000.0, False  # GW → MW
-        def extract_flow_value(record: dict) -> float | None:
-            """Return the numeric flow value from the first matching key in a record."""
-            for k in _VALUE_KEYS:
-                if k in record:
-                    v = to_float(record[k])
-                    if v is not None:
-                        return v
-            return None
-
-        # Strategy 1: find a record whose name/label indicates "Total Demand".
-        for record in records:
-            if not isinstance(record, dict):
+                    ldz_found.add(name)
                 continue
-            name = get_record_name(record, _NAME_KEYS)
-            if "total" in name and "demand" in name:
-                v = extract_flow_value(record)
-                if v is not None and v > 0:
-                    return v * MCM_D_TO_MW, True
 
-        # Strategy 2: identify individual LDZ zone rows and sum their values.
-        ldz_sum = 0.0
-        ldz_count = 0
-        _LDZ_NAME_KEYS = ("name", "rowName", "RowName", "zone", "ldz", "code")
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            name = get_record_name(record, _LDZ_NAME_KEYS)
-            if name in LDZ_CODES:
+            # Full region name match (e.g. "ldz sc offtake", "scotland offtake").
+            matched_code: str | None = None
+            for full_name, code in LDZ_NAME_MAP.items():
+                if full_name in name and ("ldz" in name or "offtake" in name or "demand" in name):
+                    matched_code = code
+                    break
+            # Also catch patterns like "ldz sc" or "ldz_sc".
+            if not matched_code:
+                for code in LDZ_CODES:
+                    if f"ldz {code}" in name or f"ldz{code}" in name:
+                        matched_code = code
+                        break
+
+            if matched_code and matched_code not in ldz_found:
                 v = extract_flow_value(record)
                 if v is not None:
                     ldz_sum += v
-                    ldz_count += 1
+                    ldz_found.add(matched_code)
 
-        if ldz_count >= 5:  # Require at least 5 LDZs for a valid sum
+        if len(ldz_found) >= 5:
             return ldz_sum * MCM_D_TO_MW, True
 
         raise ValueError(
             f"Could not extract demand from REST API response "
-            f"(LDZ zones found: {ldz_count})"
+            f"(LDZ zones found: {len(ldz_found)}, codes: {ldz_found})"
         )
+
     except Exception as exc:
         print(f"  REST API error ({type(exc).__name__}): {exc}")
         month = datetime.datetime.now(datetime.timezone.utc).month
