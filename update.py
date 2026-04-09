@@ -101,151 +101,184 @@ TECH_COLOURS = {
 # ---------------------------------------------------------------------------
 
 def fetch_gas_demand_mw() -> tuple[float, bool]:
+    categories: list = []
+    sub_items: list = []
+    urls_tried: list = []
+
     try:
-        # ------------------------------------------------------------------
-        # Step 1 — Discover publication IDs from the catalogue.
-        # ------------------------------------------------------------------
-        cat_resp = requests.get(CATALOGUE_URL, timeout=20)
-        cat_resp.raise_for_status()
-        catalogue = cat_resp.json()
+        result = _fetch_gas_demand_inner(categories, sub_items, urls_tried)
+        if result is not None:
+            return result
+    except Exception as exc:
+        print(f"  REST API error ({type(exc).__name__}): {exc}")
 
-        print("  [gas] Full catalogue response:")
-        pprint.pprint(catalogue)
+    # ------------------------------------------------------------------
+    # Fallback — log diagnostics and return a seasonal estimate.
+    # ------------------------------------------------------------------
+    print(f"  FALLBACK: Using seasonal estimate. Catalogue categories found: {categories}")
+    print(f"  Demand sub-items found: {sub_items}")
+    print(f"  URLs tried: {urls_tried}")
+    month = datetime.datetime.now(datetime.timezone.utc).month
+    gw = SEASONAL_FALLBACK_GW[month]
+    return gw * 1_000.0, False  # GW → MW
 
-        # Normalise catalogue to a flat list of publication objects.
-        pub_list: list = []
-        if isinstance(catalogue, list):
-            pub_list = catalogue
-        elif isinstance(catalogue, dict):
-            for v in catalogue.values():
+
+def _fetch_gas_demand_inner(
+    categories: list, sub_items: list, urls_tried: list
+) -> "tuple[float, bool] | None":
+    """Inner implementation of fetch_gas_demand_mw(); mutates the diagnostic lists.
+
+    Returns a ``(mw, live)`` pair on success, or ``None`` if no value could be
+    extracted (triggering the seasonal fallback in the caller).
+    """
+    # ------------------------------------------------------------------
+    # Step 1 — Get top-level categories from the catalogue.
+    # The catalogue returns categories (e.g. "demand", "supplies") with
+    # id=None; we must drill into the "demand" category separately.
+    # ------------------------------------------------------------------
+    cat_resp = requests.get(CATALOGUE_URL, timeout=20)
+    cat_resp.raise_for_status()
+    catalogue = cat_resp.json()
+
+    # Normalise catalogue to a flat list of category objects.
+    cat_list: list = []
+    if isinstance(catalogue, list):
+        cat_list = catalogue
+    elif isinstance(catalogue, dict):
+        for v in catalogue.values():
+            if isinstance(v, list):
+                cat_list = v
+                break
+
+    _TEXT_KEYS = ("text", "name", "label", "description", "title", "category")
+
+    def item_text(item: dict) -> str:
+        for k in _TEXT_KEYS:
+            if k in item:
+                return str(item[k]).lower().strip()
+        return ""
+
+    categories[:] = [item_text(c) for c in cat_list if isinstance(c, dict)]
+    print(f"  [gas] Catalogue categories found: {categories}")
+
+    # ------------------------------------------------------------------
+    # Step 2 — Drill into the "demand" category to find sub-publications.
+    # Try candidate URL patterns in order; use the first that returns 200.
+    # ------------------------------------------------------------------
+    candidate_urls = [
+        f"{REST_BASE}/publications/catalogue/demand",
+        f"{REST_BASE}/publications/demand",
+        f"{REST_BASE}/publications/catalogue?category=demand",
+        f"{REST_BASE}/demand",
+    ]
+
+    demand_payload = None
+    for url in candidate_urls:
+        urls_tried.append(url)
+        try:
+            resp = requests.get(url, timeout=20)
+            print(f"  [gas] {resp.status_code} from {url}")
+            if resp.status_code == 200:
+                demand_payload = resp.json()
+                print("  [gas] Demand sub-catalogue response (first 500 chars):")
+                print(str(demand_payload)[:500])
+                break
+        except Exception as url_exc:
+            print(f"  [gas] Error fetching {url}: {url_exc}")
+
+    # Normalise sub-catalogue to a flat list.
+    sub_list: list = []
+    if demand_payload is not None:
+        if isinstance(demand_payload, list):
+            sub_list = demand_payload
+        elif isinstance(demand_payload, dict):
+            for v in demand_payload.values():
                 if isinstance(v, list):
-                    pub_list = v
+                    sub_list = v
                     break
 
-        # Keywords that suggest a publication contains demand data.
-        _DEMAND_KEYWORDS = (
-            "instantaneous flow", "demand", "ldz", "offtake",
-            "total demand", "nts demand", "category demand",
-        )
-        _ID_KEYS = ("id", "publicationId", "publicationID", "publication_id")
-        _PUB_NAME_KEYS = (
-            "publicationObjectName", "name", "description", "label", "title",
-        )
+    _ID_KEYS = (
+        "id", "publicationId", "publicationID", "publication_id",
+        "dataItemId", "itemId",
+    )
+    _PUB_NAME_KEYS = (
+        "publicationObjectName", "dataItemName", "name", "description",
+        "label", "title", "text",
+    )
 
-        def pub_text(pub: dict) -> str:
-            parts = []
-            for k in _PUB_NAME_KEYS:
-                if k in pub:
-                    parts.append(str(pub[k]).lower())
-            return " ".join(parts)
+    def pub_text(pub: dict) -> str:
+        parts = []
+        for k in _PUB_NAME_KEYS:
+            if k in pub:
+                parts.append(str(pub[k]).lower())
+        return " ".join(parts)
 
-        def pub_id(pub: dict) -> str | None:
-            for k in _ID_KEYS:
-                if k in pub:
-                    return str(pub[k])
+    def pub_id(pub: dict) -> str | None:
+        for k in _ID_KEYS:
+            if k in pub:
+                val = pub[k]
+                if val is not None:
+                    return str(val)
+        return None
+
+    sub_items[:] = [pub_text(s) for s in sub_list if isinstance(s, dict)]
+    print(f"  [gas] Demand sub-items found ({len(sub_list)}):")
+    for item in sub_list:
+        if isinstance(item, dict):
+            print(f"    id={pub_id(item)!r}  text={pub_text(item)!r}")
+
+    # Keywords that suggest an item contains demand data.
+    _DEMAND_KEYWORDS = (
+        "total", "nts", "instantaneous", "ldz", "offtake",
+        "actual", "physical", "demand",
+    )
+
+    # Collect candidate items (those whose text matches a keyword).
+    candidate_items = [
+        item for item in sub_list
+        if isinstance(item, dict)
+        and any(kw in pub_text(item) for kw in _DEMAND_KEYWORDS)
+    ]
+    # If nothing matches, try all items.
+    if not candidate_items:
+        candidate_items = [i for i in sub_list if isinstance(i, dict)]
+
+    # ------------------------------------------------------------------
+    # Step 3 — Fetch data for each candidate item and attempt to parse.
+    # ------------------------------------------------------------------
+    def to_float(x) -> float | None:
+        try:
+            return float(str(x).strip().replace(",", ""))
+        except (TypeError, ValueError):
             return None
 
-        print(f"  [gas] {len(pub_list)} catalogue entries found:")
-        for pub in pub_list:
-            print(f"    id={pub_id(pub)!r}  text={pub_text(pub)!r}")
+    _NAME_KEYS = (
+        "name", "rowName", "RowName", "zone", "type", "label",
+        "description", "siteName", "category", "publicationObjectName",
+        "dataItemName", "text",
+    )
+    _VALUE_KEYS = (
+        "value", "flowValue", "FlowValue", "flow", "quantity",
+        "instantaneousFlow", "operationalValue", "publishedValue",
+        "currentValue",
+    )
 
-        # Choose the best matching publication.
-        chosen_id: str | None = None
-        for pub in pub_list:
-            text = pub_text(pub)
-            if any(kw in text for kw in _DEMAND_KEYWORDS):
-                chosen_id = pub_id(pub)
-                if chosen_id:
-                    print(f"  [gas] Chosen publication id={chosen_id!r}  ({text!r})")
-                    break
+    def get_record_name(record: dict) -> str:
+        for k in _NAME_KEYS:
+            if k in record:
+                return str(record[k]).lower().strip()
+        return ""
 
-        if not chosen_id:
-            raise ValueError(
-                "No demand-related publication found in catalogue. "
-                f"Entries: {[pub_text(p) for p in pub_list]}"
-            )
+    def extract_flow_value(record: dict) -> float | None:
+        for k in _VALUE_KEYS:
+            if k in record:
+                v = to_float(record[k])
+                if v is not None:
+                    return v
+        return None
 
-        # ------------------------------------------------------------------
-        # Step 2 — Fetch the latest data for the chosen publication.
-        # Try multiple URL patterns with fallback.
-        # ------------------------------------------------------------------
-        url_patterns = [
-            f"{REST_BASE}/publications/{chosen_id}/latest",
-            f"{REST_BASE}/publications/{chosen_id}?latestFlag=Y",
-            f"{REST_BASE}/publications/{chosen_id}/data?latestFlag=Y",
-            f"{REST_BASE}/publications/{chosen_id}",
-        ]
-
-        payload = None
-        for url in url_patterns:
-            try:
-                resp = requests.get(url, timeout=20)
-                if resp.status_code == 200:
-                    payload = resp.json()
-                    print(f"  [gas] Data fetched from {url}")
-                    print("  [gas] First few records:")
-                    if isinstance(payload, list):
-                        records_preview = payload
-                    elif isinstance(payload, dict):
-                        records_preview = next(
-                            (v for v in payload.values() if isinstance(v, list)), []
-                        )
-                    else:
-                        records_preview = []
-                    pprint.pprint(records_preview[:5])
-                    break
-                print(f"  [gas] {resp.status_code} from {url}")
-            except Exception as url_exc:
-                print(f"  [gas] Error fetching {url}: {url_exc}")
-
-        if payload is None:
-            raise ValueError(
-                f"Could not fetch data for publication {chosen_id!r} "
-                f"from any URL pattern."
-            )
-
-        # ------------------------------------------------------------------
-        # Step 3 — Parse the response.
-        # ------------------------------------------------------------------
-        records: list = []
-        if isinstance(payload, list):
-            records = payload
-        elif isinstance(payload, dict):
-            for v in payload.values():
-                if isinstance(v, list):
-                    records = v
-                    break
-
-        def to_float(x) -> float | None:
-            try:
-                return float(str(x).strip().replace(",", ""))
-            except (TypeError, ValueError):
-                return None
-
-        _NAME_KEYS = (
-            "name", "rowName", "RowName", "zone", "type", "label",
-            "description", "siteName", "category", "publicationObjectName",
-            "dataItemName",
-        )
-        _VALUE_KEYS = (
-            "value", "flowValue", "FlowValue", "flow", "quantity",
-            "instantaneousFlow", "operationalValue",
-        )
-
-        def get_record_name(record: dict) -> str:
-            for k in _NAME_KEYS:
-                if k in record:
-                    return str(record[k]).lower().strip()
-            return ""
-
-        def extract_flow_value(record: dict) -> float | None:
-            for k in _VALUE_KEYS:
-                if k in record:
-                    v = to_float(record[k])
-                    if v is not None:
-                        return v
-            return None
-
+    def try_parse_records(records: list) -> "tuple[float, bool] | None":
+        """Try Strategy 1 then Strategy 2 on a flat list of records."""
         # Strategy 1: find a record whose name indicates total demand.
         for record in records:
             if not isinstance(record, dict):
@@ -254,18 +287,16 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
             if "total" in name and "demand" in name:
                 v = extract_flow_value(record)
                 if v is not None and v > 0:
+                    print(f"  [gas] Strategy 1 matched: name={name!r} value={v}")
                     return v * MCM_D_TO_MW, True
 
         # Strategy 2: sum individual LDZ offtake rows.
-        # Match by 2-letter code OR by full region name patterns.
         ldz_sum = 0.0
         ldz_found: set = set()
-
         for record in records:
             if not isinstance(record, dict):
                 continue
             name = get_record_name(record)
-
             # Direct 2-letter code match.
             if name in LDZ_CODES:
                 v = extract_flow_value(record)
@@ -273,11 +304,12 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                     ldz_sum += v
                     ldz_found.add(name)
                 continue
-
             # Full region name match (e.g. "ldz sc offtake", "scotland offtake").
             matched_code: str | None = None
             for full_name, code in LDZ_NAME_MAP.items():
-                if full_name in name and ("ldz" in name or "offtake" in name or "demand" in name):
+                if full_name in name and (
+                    "ldz" in name or "offtake" in name or "demand" in name
+                ):
                     matched_code = code
                     break
             # Also catch patterns like "ldz sc" or "ldz_sc".
@@ -286,7 +318,6 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                     if f"ldz {code}" in name or f"ldz{code}" in name:
                         matched_code = code
                         break
-
             if matched_code and matched_code not in ldz_found:
                 v = extract_flow_value(record)
                 if v is not None:
@@ -294,18 +325,59 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                     ldz_found.add(matched_code)
 
         if len(ldz_found) >= 5:
+            print(f"  [gas] Strategy 2 matched {len(ldz_found)} LDZ zones: {ldz_found}")
             return ldz_sum * MCM_D_TO_MW, True
 
-        raise ValueError(
-            f"Could not extract demand from REST API response "
-            f"(LDZ zones found: {len(ldz_found)}, codes: {ldz_found})"
-        )
+        return None
 
-    except Exception as exc:
-        print(f"  REST API error ({type(exc).__name__}): {exc}")
-        month = datetime.datetime.now(datetime.timezone.utc).month
-        gw = SEASONAL_FALLBACK_GW[month]
-        return gw * 1_000.0, False  # GW → MW
+    # First, check if the demand_payload itself is already a data response
+    # (i.e., it contains inline records rather than sub-publications).
+    if demand_payload is not None:
+        inline_records: list = []
+        if isinstance(demand_payload, list):
+            inline_records = demand_payload
+        elif isinstance(demand_payload, dict):
+            for v in demand_payload.values():
+                if isinstance(v, list):
+                    inline_records = v
+                    break
+        result = try_parse_records(inline_records)
+        if result is not None:
+            return result
+
+    # Then try fetching data URLs for each candidate sub-item.
+    for item in candidate_items:
+        item_id = pub_id(item)
+        if not item_id:
+            continue
+        data_urls = [
+            f"{REST_BASE}/publications/{item_id}/data?latestFlag=Y",
+            f"{REST_BASE}/publications/{item_id}/latest",
+            f"{REST_BASE}/publications/{item_id}",
+        ]
+        for url in data_urls:
+            urls_tried.append(url)
+            try:
+                resp = requests.get(url, timeout=20)
+                print(f"  [gas] {resp.status_code} from {url}")
+                if resp.status_code == 200:
+                    print(f"  [gas] Response (first 500 chars): {resp.text[:500]}")
+                    payload = resp.json()
+                    records: list = []
+                    if isinstance(payload, list):
+                        records = payload
+                    elif isinstance(payload, dict):
+                        for v in payload.values():
+                            if isinstance(v, list):
+                                records = v
+                                break
+                    result = try_parse_records(records)
+                    if result is not None:
+                        return result
+            except Exception as url_exc:
+                print(f"  [gas] Error fetching {url}: {url_exc}")
+
+    return None
 
 
 def fetch_weather() -> dict:
