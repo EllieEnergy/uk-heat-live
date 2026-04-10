@@ -116,10 +116,10 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
     # ------------------------------------------------------------------
     # Compute UTC time window: last 2 hours, formatted as YYYY-MM-DDTHH:MM
     # ------------------------------------------------------------------
+    _fmt = "%Y-%m-%dT%H:%M"
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     to_dt = now_utc.replace(second=0, microsecond=0)
     from_dt = to_dt - datetime.timedelta(hours=2)
-    _fmt = "%Y-%m-%dT%H:%M"
 
     url = DATASET_ENDPOINT_TEMPLATE.format(publication_id=pub_id)
 
@@ -197,9 +197,9 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
 
         if not records:
             # Widen to last 6 hours if the 2-hour window returned nothing
-            from_str6 = (to_dt - datetime.timedelta(hours=6)).strftime(_fmt)
+            from_str_6h = (to_dt - datetime.timedelta(hours=6)).strftime(_fmt)
             print("  [gas] Empty response — retrying with 6-hour window")
-            records, payload = fetch_records(from_str6, to_str)
+            records, payload = fetch_records(from_str_6h, to_str)
             print(f"  [gas] Records found (6h): {len(records)}")
 
         if not records:
