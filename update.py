@@ -9,19 +9,16 @@ import math
 import os
 import pathlib
 import datetime
+import xml.etree.ElementTree as ET
 import requests
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# National Gas developer datasets API — direct access by publication ID.
-# No authentication required (open data policy).
-DATASET_BASE_URL = "https://apideveloper.nationalgas.com/api/v1"
-DATASET_ENDPOINT_TEMPLATE = f"{DATASET_BASE_URL}/datasets/{{publication_id}}/data"
-
-# Default publication ID for NTS instantaneous demand data.
-# Override via the NG_DEMAND_PUB_ID environment variable.
-DEFAULT_DEMAND_PUB_ID = "PUBOBJ1024"
+# National Gas MIPI SOAP API — proven working interface for instantaneous flow
+# data (available until 11 May 2026). No authentication required (public data).
+SOAP_URL = "https://energywatch.nationalgas.com/EDP-PublicUI/PublicPI/InstantaneousFlowWebService.asmx"
+SOAP_ACTION = "http://www.NationalGrid.com/EDP/UI/GetInstantaneousFlowData"
 
 # 1 mcm/d → MW
 # Calculation: 1,000,000 m³/day × 39.5 MJ/m³ ÷ (3600 s/h × 24 h/day) = MW
@@ -104,24 +101,13 @@ TECH_COLOURS = {
 # ---------------------------------------------------------------------------
 
 def fetch_gas_demand_mw() -> tuple[float, bool]:
-    """Fetch real-time gas demand from the National Gas datasets API.
+    """Fetch real-time gas demand from the National Gas MIPI SOAP API.
 
-    Uses the direct dataset endpoint pattern:
-        GET /datasets/{publication_id}/data?from=YYYY-MM-DDTHH:MM&to=YYYY-MM-DDTHH:MM
+    Sends a GetInstantaneousFlowData SOAP request and parses the XML response
+    to extract total NTS demand in mcm/d, then converts to MW.
 
     Returns (demand_mw, is_live) where is_live=False means seasonal fallback was used.
     """
-    pub_id = os.environ.get("NG_DEMAND_PUB_ID", DEFAULT_DEMAND_PUB_ID)
-
-    # ------------------------------------------------------------------
-    # Compute UTC time window: last 2 hours, formatted as YYYY-MM-DDTHH:MM
-    # ------------------------------------------------------------------
-    _fmt = "%Y-%m-%dT%H:%M"
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    to_dt = now_utc.replace(second=0, microsecond=0)
-    from_dt = to_dt - datetime.timedelta(hours=2)
-
-    url = DATASET_ENDPOINT_TEMPLATE.format(publication_id=pub_id)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -132,126 +118,118 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
         except (TypeError, ValueError):
             return None
 
-    _TS_KEYS = (
-        "applicableFor", "applicable_for", "dateTime", "date_time",
-        "time", "timestamp", "gasDay", "gas_day", "date",
-    )
-    _VALUE_KEYS = (
-        "value", "quantity", "flowValue", "FlowValue", "flow",
-        "instantaneousFlow", "operationalValue", "publishedValue", "currentValue",
-    )
-
-    def get_timestamp(record: dict) -> str:
-        for k in _TS_KEYS:
-            if k in record:
-                return str(record[k])
+    def get_record_name(elem) -> str:
+        """Return the lowercased text content of a Name/ApplicableFor child element."""
+        for tag in ("Name", "ApplicableFor", "name", "applicableFor"):
+            child = elem.find(tag)
+            if child is not None and child.text:
+                return child.text.strip().lower()
         return ""
 
-    def get_value(record: dict) -> float | None:
-        for k in _VALUE_KEYS:
-            if k in record:
-                v = to_float(record[k])
+    def extract_flow_value(elem) -> float | None:
+        """Extract a numeric flow value from FlowValue or Value child elements."""
+        for tag in ("FlowValue", "Value", "flowValue", "value"):
+            child = elem.find(tag)
+            if child is not None and child.text:
+                v = to_float(child.text)
                 if v is not None:
                     return v
         return None
 
-    def normalise_records(payload) -> list:
-        """Extract a flat list of records from various response shapes."""
-        if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
-            for key in ("data", "records", "values", "items", "results"):
-                if key in payload and isinstance(payload[key], list):
-                    return payload[key]
-            # Fall back to first list value found
-            for v in payload.values():
-                if isinstance(v, list):
-                    return v
-        return []
+    def strip_ns(tag: str) -> str:
+        """Strip XML namespace prefix from a tag name."""
+        return tag.split("}")[-1] if "}" in tag else tag
 
-    def detect_unit(payload, record: dict) -> str:
-        """Return a normalised unit string from payload metadata or record fields."""
-        for uk in ("unit", "unitOfMeasure", "units", "uom"):
-            if isinstance(payload, dict) and uk in payload:
-                return str(payload[uk]).lower().strip()
-        for uk in ("unit", "unitOfMeasure", "units", "uom"):
-            if uk in record:
-                return str(record[uk]).lower().strip()
-        return ""
-
-    def fetch_records(from_str: str, to_str: str):
-        """Call the dataset API and return (records_list, raw_payload)."""
-        print(f"  [gas] GET {url} ?from={from_str}&to={to_str}")
-        resp = requests.get(url, params={"from": from_str, "to": to_str}, timeout=20)
-        print(f"  [gas] Status: {resp.status_code}")
-        resp.raise_for_status()
-        payload = resp.json()
-        return normalise_records(payload), payload
+    SOAP_ENVELOPE = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        ' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+        ' xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<soap:Body>"
+        '<GetInstantaneousFlowData xmlns="http://www.NationalGrid.com/EDP/UI/" />'
+        "</soap:Body>"
+        "</soap:Envelope>"
+    )
 
     try:
-        from_str = from_dt.strftime(_fmt)
-        to_str = to_dt.strftime(_fmt)
-
-        records, payload = fetch_records(from_str, to_str)
-        print(f"  [gas] Records found: {len(records)}")
-
-        if not records:
-            # Widen to last 6 hours if the 2-hour window returned nothing
-            from_str_6h = (to_dt - datetime.timedelta(hours=6)).strftime(_fmt)
-            print("  [gas] Empty response — retrying with 6-hour window")
-            records, payload = fetch_records(from_str_6h, to_str)
-            print(f"  [gas] Records found (6h): {len(records)}")
-
-        if not records:
-            raise ValueError("No records returned from dataset API")
-
-        # Pick the record with the latest timestamp
-        valid = [
-            (get_timestamp(r), get_value(r), r)
-            for r in records
-            if isinstance(r, dict)
-        ]
-        valid = [(ts, v, r) for ts, v, r in valid if v is not None]
-
-        if not valid:
-            raise ValueError("No valid numeric values found in records")
-
-        # ISO-format timestamps sort lexicographically
-        valid.sort(key=lambda x: x[0], reverse=True)
-        latest_ts, latest_val, latest_rec = valid[0]
-        print(f"  [gas] Selected timestamp: {latest_ts!r}  raw value: {latest_val}")
-
-        unit = detect_unit(payload, latest_rec)
-        print(f"  [gas] Detected unit: {unit!r}")
+        print(f"  [gas] POST {SOAP_URL}")
+        resp = requests.post(
+            SOAP_URL,
+            data=SOAP_ENVELOPE.encode("utf-8"),
+            headers={
+                "Content-Type": "text/xml; charset=utf-8",
+                "SOAPAction": f'"{SOAP_ACTION}"',
+            },
+            timeout=30,
+        )
+        print(f"  [gas] Status: {resp.status_code}")
+        resp.raise_for_status()
 
         # ------------------------------------------------------------------
-        # Unit conversion to MW
-        # mcm/d or mscm → apply MCM_D_TO_MW (1 mcm/d ≈ 456.7 MW)
-        # kWh (per hour implied) → divide by 1 000 to get MW
-        # MW → pass through
-        # Unknown → assume mcm/d and log a warning
+        # Parse the SOAP XML response
         # ------------------------------------------------------------------
-        if "mw" in unit:
-            demand_mw = latest_val
-        elif any(x in unit for x in ("mcm", "mscm", "mmscm")):
-            demand_mw = latest_val * MCM_D_TO_MW
-        elif "kwh" in unit:
-            demand_mw = latest_val / 1_000.0
-        else:
-            if unit:
-                print(f"  [gas] WARNING: Unknown unit {unit!r} — assuming mcm/d for conversion")
-            else:
-                print("  [gas] No unit detected — assuming mcm/d for conversion")
-            demand_mw = latest_val * MCM_D_TO_MW
+        root = ET.fromstring(resp.content)
 
-        print(f"  [gas] Gas demand: {demand_mw:,.0f} MW (live=True)")
-        return demand_mw, True
+        # Collect all leaf elements that look like data rows (have a flow value)
+        # and build a flat list of (name, value_mcm_d) tuples.
+        all_items: list[tuple[str, float]] = []
+        for elem in root.iter():
+            val = extract_flow_value(elem)
+            if val is not None:
+                name = get_record_name(elem)
+                all_items.append((name, val))
+
+        print(f"  [gas] Data items found: {len(all_items)}")
+        for n, v in all_items[:20]:  # debug: print up to 20 items
+            print(f"    {n!r:40s} {v}")
+
+        # ------------------------------------------------------------------
+        # Strategy 1: Find a "Total Demand" or aggregate demand record
+        # ------------------------------------------------------------------
+        total_demand_val: float | None = None
+        for name, val in all_items:
+            if "total" in name and "demand" in name:
+                total_demand_val = val
+                print(f"  [gas] Strategy 1 — Total Demand record: {val} mcm/d")
+                break
+
+        if total_demand_val is not None:
+            demand_mw = total_demand_val * MCM_D_TO_MW
+            print(f"  [gas] Gas demand: {demand_mw:,.0f} MW (live=True, strategy=1)")
+            return demand_mw, True
+
+        # ------------------------------------------------------------------
+        # Strategy 2: Sum individual LDZ offtake records
+        # ------------------------------------------------------------------
+        ldz_values: dict[str, float] = {}
+        for name, val in all_items:
+            # Match by short LDZ code
+            if name in LDZ_CODES:
+                ldz_values[name] = val
+                continue
+            # Match by full region name
+            code = LDZ_NAME_MAP.get(name)
+            if code is not None:
+                ldz_values[code] = val
+
+        print(f"  [gas] Strategy 2 — LDZ zones matched: {sorted(ldz_values.keys())}")
+
+        if len(ldz_values) >= 5:
+            total_mcm_d = sum(ldz_values.values())
+            demand_mw = total_mcm_d * MCM_D_TO_MW
+            print(f"  [gas] Gas demand: {demand_mw:,.0f} MW (live=True, strategy=2, zones={len(ldz_values)})")
+            return demand_mw, True
+
+        raise ValueError(
+            f"Could not extract demand: no Total Demand record and only "
+            f"{len(ldz_values)} LDZ zones found (need ≥5)"
+        )
 
     except Exception as exc:
-        print(f"  [gas] API error ({type(exc).__name__}): {exc}")
+        print(f"  [gas] SOAP API error ({type(exc).__name__}): {exc}")
 
     # ------------------------------------------------------------------
-    # Seasonal fallback if API call fails.
+    # Seasonal fallback if SOAP call fails.
     # ------------------------------------------------------------------
     print("  FALLBACK: Using seasonal estimate.")
     month = datetime.datetime.now(datetime.timezone.utc).month
@@ -699,7 +677,7 @@ def render_html(
     <ul>{assumptions_html}</ul>
     <p style="margin-top:10px">
       Data sources:
-      <a href="https://api.nationalgas.com/operationaldata/v1" target="_blank">National Gas Instantaneous Flow REST API</a> ·
+      <a href="https://data.nationalgas.com" target="_blank">National Gas Instantaneous Flow (SOAP API)</a> ·
       <a href="https://www.gov.uk/government/collections/energy-consumption-in-the-uk" target="_blank">DESNZ Energy Consumption in the UK</a> ·
       <a href="https://api.carbonintensity.org.uk" target="_blank">Carbon Intensity API</a> ·
       <a href="https://www.ofgem.gov.uk/check-if-energy-price-cap-affects-you" target="_blank">Ofgem Price Cap</a>
