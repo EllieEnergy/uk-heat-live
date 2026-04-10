@@ -9,16 +9,19 @@ import math
 import os
 import pathlib
 import datetime
-import pprint
 import requests
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# National Gas REST API — catalogue-based discovery.
+# National Gas developer datasets API — direct access by publication ID.
 # No authentication required (open data policy).
-REST_BASE = "https://api.nationalgas.com/operationaldata/v1"
-CATALOGUE_URL = f"{REST_BASE}/publications/catalogue"
+DATASET_BASE_URL = "https://apideveloper.nationalgas.com/api/v1"
+DATASET_ENDPOINT_TEMPLATE = f"{DATASET_BASE_URL}/datasets/{{publication_id}}/data"
+
+# Default publication ID for NTS instantaneous demand data.
+# Override via the NG_DEMAND_PUB_ID environment variable.
+DEFAULT_DEMAND_PUB_ID = "PUBOBJ1024"
 
 # 1 mcm/d → MW
 # Calculation: 1,000,000 m³/day × 39.5 MJ/m³ ÷ (3600 s/h × 24 h/day) = MW
@@ -101,28 +104,27 @@ TECH_COLOURS = {
 # ---------------------------------------------------------------------------
 
 def fetch_gas_demand_mw() -> tuple[float, bool]:
-    """Fetch real-time gas demand from the National Gas publications/catalogue REST API.
+    """Fetch real-time gas demand from the National Gas datasets API.
+
+    Uses the direct dataset endpoint pattern:
+        GET /datasets/{publication_id}/data?from=YYYY-MM-DDTHH:MM&to=YYYY-MM-DDTHH:MM
 
     Returns (demand_mw, is_live) where is_live=False means seasonal fallback was used.
     """
-    urls_tried: list[str] = []
+    pub_id = os.environ.get("NG_DEMAND_PUB_ID", DEFAULT_DEMAND_PUB_ID)
 
     # ------------------------------------------------------------------
-    # Helper: recursively collect all catalogueEntries from nested tree.
+    # Compute UTC time window: last 2 hours, formatted as YYYY-MM-DDTHH:MM
     # ------------------------------------------------------------------
-    def collect_entries(node: dict) -> list[dict]:
-        """Recursively collect all catalogueEntries from nested subCategory tree."""
-        entries: list[dict] = []
-        for entry in node.get("catalogueEntries", []):
-            if isinstance(entry, dict):
-                entries.append(entry)
-        for sub in node.get("subCategory", []):
-            if isinstance(sub, dict):
-                entries.extend(collect_entries(sub))
-        return entries
+    _fmt = "%Y-%m-%dT%H:%M"
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    to_dt = now_utc.replace(second=0, microsecond=0)
+    from_dt = to_dt - datetime.timedelta(hours=2)
+
+    url = DATASET_ENDPOINT_TEMPLATE.format(publication_id=pub_id)
 
     # ------------------------------------------------------------------
-    # Helper: extract a float from various field name conventions.
+    # Helpers
     # ------------------------------------------------------------------
     def to_float(x) -> float | None:
         try:
@@ -130,24 +132,22 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
         except (TypeError, ValueError):
             return None
 
-    _NAME_KEYS = (
-        "name", "rowName", "RowName", "zone", "type", "label",
-        "description", "siteName", "category", "publicationObjectName",
-        "dataItemName", "text",
+    _TS_KEYS = (
+        "applicableFor", "applicable_for", "dateTime", "date_time",
+        "time", "timestamp", "gasDay", "gas_day", "date",
     )
     _VALUE_KEYS = (
-        "value", "flowValue", "FlowValue", "flow", "quantity",
-        "instantaneousFlow", "operationalValue", "publishedValue",
-        "currentValue",
+        "value", "quantity", "flowValue", "FlowValue", "flow",
+        "instantaneousFlow", "operationalValue", "publishedValue", "currentValue",
     )
 
-    def get_record_name(record: dict) -> str:
-        for k in _NAME_KEYS:
+    def get_timestamp(record: dict) -> str:
+        for k in _TS_KEYS:
             if k in record:
-                return str(record[k]).lower().strip()
+                return str(record[k])
         return ""
 
-    def extract_flow_value(record: dict) -> float | None:
+    def get_value(record: dict) -> float | None:
         for k in _VALUE_KEYS:
             if k in record:
                 v = to_float(record[k])
@@ -155,178 +155,105 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
                     return v
         return None
 
-    def try_parse_records(records: list) -> "tuple[float, bool] | None":
-        """Try Strategy 1 then Strategy 2 on a flat list of records."""
-        print(f"  [gas] Parsing {len(records)} records; field names sample: "
-              f"{[list(r.keys()) for r in records[:3] if isinstance(r, dict)]}")
+    def normalise_records(payload) -> list:
+        """Extract a flat list of records from various response shapes."""
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            for key in ("data", "records", "values", "items", "results"):
+                if key in payload and isinstance(payload[key], list):
+                    return payload[key]
+            # Fall back to first list value found
+            for v in payload.values():
+                if isinstance(v, list):
+                    return v
+        return []
 
-        # Strategy 1: find a record whose name indicates total demand.
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            name = get_record_name(record)
-            if "total" in name and "demand" in name:
-                v = extract_flow_value(record)
-                if v is not None and v > 0:
-                    print(f"  [gas] Strategy 1 matched: name={name!r} value={v}")
-                    return v * MCM_D_TO_MW, True
+    def detect_unit(payload, record: dict) -> str:
+        """Return a normalised unit string from payload metadata or record fields."""
+        for uk in ("unit", "unitOfMeasure", "units", "uom"):
+            if isinstance(payload, dict) and uk in payload:
+                return str(payload[uk]).lower().strip()
+        for uk in ("unit", "unitOfMeasure", "units", "uom"):
+            if uk in record:
+                return str(record[uk]).lower().strip()
+        return ""
 
-        # Strategy 2: sum individual LDZ offtake rows.
-        ldz_sum = 0.0
-        ldz_found: set = set()
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            name = get_record_name(record)
-            # Direct 2-letter code match.
-            if name in LDZ_CODES:
-                v = extract_flow_value(record)
-                if v is not None:
-                    ldz_sum += v
-                    ldz_found.add(name)
-                continue
-            # Full region name match (e.g. "ldz sc offtake", "scotland offtake").
-            matched_code: str | None = None
-            for full_name, code in LDZ_NAME_MAP.items():
-                if full_name in name and (
-                    "ldz" in name or "offtake" in name or "demand" in name
-                ):
-                    matched_code = code
-                    break
-            # Also catch patterns like "ldz sc" or "ldz_sc".
-            if not matched_code:
-                for code in LDZ_CODES:
-                    if f"ldz {code}" in name or f"ldz{code}" in name:
-                        matched_code = code
-                        break
-            if matched_code and matched_code not in ldz_found:
-                v = extract_flow_value(record)
-                if v is not None:
-                    ldz_sum += v
-                    ldz_found.add(matched_code)
-
-        if len(ldz_found) >= 5:
-            print(f"  [gas] Strategy 2 matched {len(ldz_found)} LDZ zones: {ldz_found}")
-            return ldz_sum * MCM_D_TO_MW, True
-
-        return None
-
-    try:
-        # ------------------------------------------------------------------
-        # Step 1 — Fetch the catalogue and find the "demand" category.
-        # ------------------------------------------------------------------
-        resp = requests.get(CATALOGUE_URL, timeout=20)
-        print(f"  [gas] {resp.status_code} from {CATALOGUE_URL}")
+    def fetch_records(from_str: str, to_str: str):
+        """Call the dataset API and return (records_list, raw_payload)."""
+        print(f"  [gas] GET {url} ?from={from_str}&to={to_str}")
+        resp = requests.get(url, params={"from": from_str, "to": to_str}, timeout=20)
+        print(f"  [gas] Status: {resp.status_code}")
         resp.raise_for_status()
         payload = resp.json()
+        return normalise_records(payload), payload
 
-        categories = payload.get("data", [])
-        category_names = [c.get("name", "") for c in categories if isinstance(c, dict)]
-        print(f"  [gas] Catalogue categories found: {category_names}")
+    try:
+        from_str = from_dt.strftime(_fmt)
+        to_str = to_dt.strftime(_fmt)
 
-        demand_cat = next(
-            (c for c in categories if isinstance(c, dict) and c.get("name", "").lower() == "demand"),
-            None,
-        )
+        records, payload = fetch_records(from_str, to_str)
+        print(f"  [gas] Records found: {len(records)}")
 
-        if demand_cat is None:
-            print("  [gas] WARNING: 'demand' category not found in catalogue")
+        if not records:
+            # Widen to last 6 hours if the 2-hour window returned nothing
+            from_str_6h = (to_dt - datetime.timedelta(hours=6)).strftime(_fmt)
+            print("  [gas] Empty response — retrying with 6-hour window")
+            records, payload = fetch_records(from_str_6h, to_str)
+            print(f"  [gas] Records found (6h): {len(records)}")
+
+        if not records:
+            raise ValueError("No records returned from dataset API")
+
+        # Pick the record with the latest timestamp
+        valid = [
+            (get_timestamp(r), get_value(r), r)
+            for r in records
+            if isinstance(r, dict)
+        ]
+        valid = [(ts, v, r) for ts, v, r in valid if v is not None]
+
+        if not valid:
+            raise ValueError("No valid numeric values found in records")
+
+        # ISO-format timestamps sort lexicographically
+        valid.sort(key=lambda x: x[0], reverse=True)
+        latest_ts, latest_val, latest_rec = valid[0]
+        print(f"  [gas] Selected timestamp: {latest_ts!r}  raw value: {latest_val}")
+
+        unit = detect_unit(payload, latest_rec)
+        print(f"  [gas] Detected unit: {unit!r}")
+
+        # ------------------------------------------------------------------
+        # Unit conversion to MW
+        # mcm/d or mscm → apply MCM_D_TO_MW (1 mcm/d ≈ 456.7 MW)
+        # kWh (per hour implied) → divide by 1 000 to get MW
+        # MW → pass through
+        # Unknown → assume mcm/d and log a warning
+        # ------------------------------------------------------------------
+        if "mw" in unit:
+            demand_mw = latest_val
+        elif any(x in unit for x in ("mcm", "mscm", "mmscm")):
+            demand_mw = latest_val * MCM_D_TO_MW
+        elif "kwh" in unit:
+            demand_mw = latest_val / 1_000.0
         else:
-            # ------------------------------------------------------------------
-            # Step 2 — Recursively collect ALL catalogueEntries from demand tree.
-            # ------------------------------------------------------------------
-            all_entries = collect_entries(demand_cat)
-            print(f"  [gas] Total catalogueEntries found under demand: {len(all_entries)}")
-            for e in all_entries:
-                print(f"    name={e.get('name', '?')!r}  "
-                      f"publicationId={e.get('publicationId', '?')!r}  "
-                      f"unit={e.get('unitOfMeasure', '?')!r}")
-
-            # ------------------------------------------------------------------
-            # Step 3 — Select the best publication(s) for demand data.
-            # ------------------------------------------------------------------
-            # Priority 1: single entry with "instantaneous" AND ("total"/"demand"/"aggregate")
-            priority1 = [
-                e for e in all_entries
-                if "instantaneous" in e.get("name", "").lower()
-                and any(kw in e.get("name", "").lower() for kw in ("total", "demand", "aggregate"))
-            ]
-            # Priority 2: instantaneous + LDZ/offtake keywords (individual zones to sum)
-            _LDZ_AND_ZONE_KEYWORDS = ("ldz", "offtake", "sc", "nw", "ne", "em", "wm", "sw", "se", "so", "ts", "wn", "ea", "nt", "no")
-            priority2 = [
-                e for e in all_entries
-                if "instantaneous" in e.get("name", "").lower()
-                and any(kw in e.get("name", "").lower() for kw in _LDZ_AND_ZONE_KEYWORDS)
-            ]
-            # Priority 3: "nts physical flows" + "demand"
-            priority3 = [
-                e for e in all_entries
-                if "nts physical flows" in e.get("name", "").lower()
-                and "demand" in e.get("name", "").lower()
-            ]
-            # Priority 4: any entry whose name contains "instantaneous"
-            priority4 = [
-                e for e in all_entries
-                if "instantaneous" in e.get("name", "").lower()
-            ]
-
-            candidates = priority1 or priority2 or priority3 or priority4 or all_entries
-
-            if priority1:
-                print(f"  [gas] Selected {len(candidates)} entries via Priority 1 (instantaneous total/demand)")
-            elif priority2:
-                print(f"  [gas] Selected {len(candidates)} entries via Priority 2 (instantaneous LDZ)")
-            elif priority3:
-                print(f"  [gas] Selected {len(candidates)} entries via Priority 3 (NTS physical flows demand)")
-            elif priority4:
-                print(f"  [gas] Selected {len(candidates)} entries via Priority 4 (instantaneous keyword)")
+            if unit:
+                print(f"  [gas] WARNING: Unknown unit {unit!r} — assuming mcm/d for conversion")
             else:
-                print(f"  [gas] No priority match — trying all {len(candidates)} entries")
+                print("  [gas] No unit detected — assuming mcm/d for conversion")
+            demand_mw = latest_val * MCM_D_TO_MW
 
-            # ------------------------------------------------------------------
-            # Step 4 — Fetch the latest data for each candidate publication.
-            # ------------------------------------------------------------------
-            for entry in candidates:
-                pub_id = entry.get("publicationId")
-                if not pub_id:
-                    continue
-
-                data_urls = [
-                    f"{REST_BASE}/publications/{pub_id}/data?latestFlag=Y",
-                    f"{REST_BASE}/publications/{pub_id}/latest",
-                    f"{REST_BASE}/publications/{pub_id}",
-                    f"{REST_BASE}/publications/{pub_id}/data",
-                ]
-                for url in data_urls:
-                    urls_tried.append(url)
-                    try:
-                        data_resp = requests.get(url, timeout=20)
-                        print(f"  [gas] {data_resp.status_code} from {url}")
-                        if data_resp.status_code == 200:
-                            print(f"  [gas] Response (first 500 chars): {data_resp.text[:500]}")
-                            data_payload = data_resp.json()
-                            records: list = []
-                            if isinstance(data_payload, list):
-                                records = data_payload
-                            elif isinstance(data_payload, dict):
-                                for v in data_payload.values():
-                                    if isinstance(v, list):
-                                        records = v
-                                        break
-                            result = try_parse_records(records)
-                            if result is not None:
-                                return result
-                    except Exception as url_exc:
-                        print(f"  [gas] Error fetching {url}: {url_exc}")
+        print(f"  [gas] Gas demand: {demand_mw:,.0f} MW (live=True)")
+        return demand_mw, True
 
     except Exception as exc:
-        print(f"  REST API error ({type(exc).__name__}): {exc}")
+        print(f"  [gas] API error ({type(exc).__name__}): {exc}")
 
     # ------------------------------------------------------------------
-    # Step 5 — Seasonal fallback if everything fails.
+    # Seasonal fallback if API call fails.
     # ------------------------------------------------------------------
-    print(f"  FALLBACK: Using seasonal estimate.")
-    print(f"  URLs tried: {urls_tried}")
+    print("  FALLBACK: Using seasonal estimate.")
     month = datetime.datetime.now(datetime.timezone.utc).month
     gw = SEASONAL_FALLBACK_GW[month]
     return gw * 1_000.0, False  # GW → MW
