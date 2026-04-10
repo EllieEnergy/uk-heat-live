@@ -214,6 +214,7 @@ def fetch_gas_demand_mw() -> tuple[float, bool]:
 
         print(f"  [gas] Strategy 2 — LDZ zones matched: {sorted(ldz_values.keys())}")
 
+        # Require at least 5 zones to ensure coverage of major distribution areas
         if len(ldz_values) >= 5:
             total_mcm_d = sum(ldz_values.values())
             demand_mw = total_mcm_d * MCM_D_TO_MW
