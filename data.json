@@ -1,0 +1,183 @@
+{
+  "timestamp": "2026-04-26 02:57:13",
+  "gas_live": false,
+  "gas_total_mw": 55000.0,
+  "total_heat_mw": 43625.73,
+  "total_carbon_t_h": 8767.6,
+  "weather": {
+    "temperature_c": 6.5,
+    "wind_speed_kmh": 8.6,
+    "available": true
+  },
+  "carbon_intensity": {
+    "gco2_kwh": 97,
+    "index": "moderate",
+    "available": true
+  },
+  "domestic": {
+    "fuel_mw": 34100.0,
+    "total_heat_mw": 29334.53,
+    "gas_fuel_mw": 32565.5,
+    "elec_fuel_mw": 1534.5,
+    "carbon_t_h": 6108.33,
+    "cost_gbp_h": 2577380.3,
+    "sh_mw": 24934.35,
+    "dhw_mw": 4400.18,
+    "technologies": {
+      "Gas Boiler": {
+        "fuel_mw": 28985.0,
+        "heat_mw": 23188.0,
+        "sh_mw": 19709.8,
+        "dhw_mw": 3478.2,
+        "gas_fuel_mw": 28985.0,
+        "elec_fuel_mw": 0.0,
+        "carbon_t_h": 5304.26,
+        "cost_gbp_h": 1959386.0
+      },
+      "Heat Pump": {
+        "fuel_mw": 852.5,
+        "heat_mw": 2557.5,
+        "sh_mw": 2173.88,
+        "dhw_mw": 383.62,
+        "gas_fuel_mw": 0.0,
+        "elec_fuel_mw": 852.5,
+        "carbon_t_h": 82.69,
+        "cost_gbp_h": 208862.5
+      },
+      "Heat Network": {
+        "fuel_mw": 852.5,
+        "heat_mw": 724.62,
+        "sh_mw": 615.93,
+        "dhw_mw": 108.69,
+        "gas_fuel_mw": 852.5,
+        "elec_fuel_mw": 0.0,
+        "carbon_t_h": 156.01,
+        "cost_gbp_h": 57629.0
+      },
+      "Direct Electric": {
+        "fuel_mw": 682.0,
+        "heat_mw": 682.0,
+        "sh_mw": 579.7,
+        "dhw_mw": 102.3,
+        "gas_fuel_mw": 0.0,
+        "elec_fuel_mw": 682.0,
+        "carbon_t_h": 66.15,
+        "cost_gbp_h": 167090.0
+      },
+      "Oil/Other": {
+        "fuel_mw": 2728.0,
+        "heat_mw": 2182.4,
+        "sh_mw": 1855.04,
+        "dhw_mw": 327.36,
+        "gas_fuel_mw": 2728.0,
+        "elec_fuel_mw": 0.0,
+        "carbon_t_h": 499.22,
+        "cost_gbp_h": 184412.8
+      }
+    }
+  },
+  "commercial": {
+    "fuel_mw": 15400.0,
+    "total_heat_mw": 14291.2,
+    "gas_fuel_mw": 13552.0,
+    "elec_fuel_mw": 1848.0,
+    "carbon_t_h": 2659.27,
+    "cost_gbp_h": 1368875.2,
+    "sh_mw": 10718.4,
+    "dhw_mw": 3572.8,
+    "technologies": {
+      "Gas Boiler": {
+        "fuel_mw": 10780.0,
+        "heat_mw": 8624.0,
+        "sh_mw": 6468.0,
+        "dhw_mw": 2156.0,
+        "gas_fuel_mw": 10780.0,
+        "elec_fuel_mw": 0.0,
+        "carbon_t_h": 1972.74,
+        "cost_gbp_h": 728728.0
+      },
+      "Heat Pump": {
+        "fuel_mw": 770.0,
+        "heat_mw": 2310.0,
+        "sh_mw": 1732.5,
+        "dhw_mw": 577.5,
+        "gas_fuel_mw": 0.0,
+        "elec_fuel_mw": 770.0,
+        "carbon_t_h": 74.69,
+        "cost_gbp_h": 188650.0
+      },
+      "Heat Network": {
+        "fuel_mw": 1232.0,
+        "heat_mw": 1047.2,
+        "sh_mw": 785.4,
+        "dhw_mw": 261.8,
+        "gas_fuel_mw": 1232.0,
+        "elec_fuel_mw": 0.0,
+        "carbon_t_h": 225.46,
+        "cost_gbp_h": 83283.2
+      },
+      "Direct Electric": {
+        "fuel_mw": 1078.0,
+        "heat_mw": 1078.0,
+        "sh_mw": 808.5,
+        "dhw_mw": 269.5,
+        "gas_fuel_mw": 0.0,
+        "elec_fuel_mw": 1078.0,
+        "carbon_t_h": 104.57,
+        "cost_gbp_h": 264110.0
+      },
+      "Oil/Other": {
+        "fuel_mw": 1540.0,
+        "heat_mw": 1232.0,
+        "sh_mw": 924.0,
+        "dhw_mw": 308.0,
+        "gas_fuel_mw": 1540.0,
+        "elec_fuel_mw": 0.0,
+        "carbon_t_h": 281.82,
+        "cost_gbp_h": 104104.0
+      }
+    }
+  },
+  "technologies": {
+    "Gas Boiler": {
+      "heat_mw": 31812.0,
+      "fuel_mw": 39765.0,
+      "dom_heat_mw": 23188.0,
+      "com_heat_mw": 8624.0,
+      "carbon_t_h": 7277.0,
+      "cost_gbp_h": 2688114.0
+    },
+    "Heat Pump": {
+      "heat_mw": 4867.5,
+      "fuel_mw": 1622.5,
+      "dom_heat_mw": 2557.5,
+      "com_heat_mw": 2310.0,
+      "carbon_t_h": 157.38,
+      "cost_gbp_h": 397512.5
+    },
+    "Heat Network": {
+      "heat_mw": 1771.82,
+      "fuel_mw": 2084.5,
+      "dom_heat_mw": 724.62,
+      "com_heat_mw": 1047.2,
+      "carbon_t_h": 381.47,
+      "cost_gbp_h": 140912.2
+    },
+    "Direct Electric": {
+      "heat_mw": 1760.0,
+      "fuel_mw": 1760.0,
+      "dom_heat_mw": 682.0,
+      "com_heat_mw": 1078.0,
+      "carbon_t_h": 170.72,
+      "cost_gbp_h": 431200.0
+    },
+    "Oil/Other": {
+      "heat_mw": 3414.4,
+      "fuel_mw": 4268.0,
+      "dom_heat_mw": 2182.4,
+      "com_heat_mw": 1232.0,
+      "carbon_t_h": 781.04,
+      "cost_gbp_h": 288516.8
+    }
+  }
+}

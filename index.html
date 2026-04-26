@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UK Heat: Live</title>
+<style>
+  :root{
+    --bg:#ffffff;--surf:#f6f8fa;--bord:#d0d7de;
+    --txt:#1f2328;--txt2:#656d76;
+    --accent:#0969da;--green:#1a7f37;--orange:#bf8700;--red:#cf222e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  header{background:var(--surf);border-bottom:1px solid var(--bord);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  header h1{font-size:1.3rem;font-weight:700}
+  .ts{font-size:0.8rem;color:var(--txt2)}
+  .info-bar{display:flex;flex-wrap:wrap;gap:8px;padding:16px 24px;background:var(--surf);border-bottom:1px solid var(--bord)}
+  .main{max-width:1200px;margin:0 auto;padding:24px 16px;display:grid;gap:24px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  .card{background:var(--surf);border:1px solid var(--bord);border-radius:12px;padding:20px}
+  .card h2{font-size:1rem;margin-bottom:16px;color:var(--txt)}
+  .tech-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+  .chips{display:flex;flex-wrap:wrap;gap:12px}
+  footer{background:var(--surf);border-top:1px solid var(--bord);padding:24px;font-size:0.82rem;color:var(--txt2);max-width:1200px;margin:0 auto}
+  details summary{cursor:pointer;color:var(--accent);margin-top:12px;font-weight:600}
+  details ul{margin-top:10px;padding-left:20px;color:var(--txt2)}
+  @media(max-width:700px){.grid-2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>UK Heat: Live<span style="background:#656d76;color:#fff;border-radius:12px;padding:2px 8px;font-size:0.7rem;font-weight:600;margin-left:8px">ESTIMATED</span></h1>
+  <span class="ts">Updated: 2026-04-26 02:57:13 UTC</span>
+</header>
+<div class="info-bar"><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;padding:6px 14px;white-space:nowrap"><span style="color:#656d76;font-size:0.75rem">🌡 Temp </span><span style="color:#1f2328;font-weight:600;font-size:0.85rem">6.5°C</span></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;padding:6px 14px;white-space:nowrap"><span style="color:#656d76;font-size:0.75rem">Gas </span><span style="color:#1f2328;font-weight:600;font-size:0.85rem">6.76p/kWh</span></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;padding:6px 14px;white-space:nowrap"><span style="color:#656d76;font-size:0.75rem">Elec </span><span style="color:#1f2328;font-weight:600;font-size:0.85rem">24.5p/kWh</span></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;padding:6px 14px;white-space:nowrap"><span style="color:#656d76;font-size:0.75rem">Gas CO₂ </span><span style="color:#1f2328;font-weight:600;font-size:0.85rem">0.183 kg/kWh</span></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;padding:6px 14px;white-space:nowrap"><span style="color:#656d76;font-size:0.75rem">Grid CO₂ </span><span style="color:#1a7f37;font-weight:600;font-size:0.85rem">0.097 kgCO₂/kWh</span></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;padding:6px 14px;white-space:nowrap"><span style="color:#656d76;font-size:0.75rem">Boiler efficiency </span><span style="color:#1f2328;font-weight:600;font-size:0.85rem">80%</span></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:20px;padding:6px 14px;white-space:nowrap"><span style="color:#656d76;font-size:0.75rem">Heat Pump COP </span><span style="color:#1f2328;font-weight:600;font-size:0.85rem">3.0</span></div></div>
+<div class="main">
+
+  <!-- Pie + tech cards -->
+  <div class="grid-2">
+    <div class="card">
+      <h2>Heat by Technology</h2>
+      <svg viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:320px;display:block;margin:auto"><path d="M160,160 L160.00,40.00 A120,120 0 1,1 41.02,175.64 Z" fill="#e67e22" stroke="#ffffff" stroke-width="2" data-tech="Gas Boiler" data-mw="31,812" data-pct="72.9" style="cursor:pointer"><title>Gas Boiler: 31,812 MW (72.9%)</title></path><path d="M160,160 L41.02,175.64 A120,120 0 0,1 59.00,95.21 Z" fill="#27ae60" stroke="#ffffff" stroke-width="2" data-tech="Heat Pump" data-mw="4,868" data-pct="11.2" style="cursor:pointer"><title>Heat Pump: 4,868 MW (11.2%)</title></path><path d="M160,160 L59.00,95.21 A120,120 0 0,1 78.62,71.81 Z" fill="#8e44ad" stroke="#ffffff" stroke-width="2" data-tech="Heat Network" data-mw="1,772" data-pct="4.1" style="cursor:pointer"><title>Heat Network: 1,772 MW (4.1%)</title></path><path d="M160,160 L78.62,71.81 A120,120 0 0,1 103.34,54.22 Z" fill="#2980b9" stroke="#ffffff" stroke-width="2" data-tech="Direct Electric" data-mw="1,760" data-pct="4.0" style="cursor:pointer"><title>Direct Electric: 1,760 MW (4.0%)</title></path><path d="M160,160 L103.34,54.22 A120,120 0 0,1 160.00,40.00 Z" fill="#7f8c8d" stroke="#ffffff" stroke-width="2" data-tech="Oil/Other" data-mw="3,414" data-pct="7.8" style="cursor:pointer"><title>Oil/Other: 3,414 MW (7.8%)</title></path></svg>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:16px;font-size:0.78rem">
+        <div style="display:flex;align-items:center;gap:6px"><span style="background:#e67e22;width:10px;height:10px;border-radius:50%;display:inline-block"></span><span style="color:#1f2328">Gas Boiler</span></div><div style="display:flex;align-items:center;gap:6px"><span style="background:#27ae60;width:10px;height:10px;border-radius:50%;display:inline-block"></span><span style="color:#1f2328">Heat Pump</span></div><div style="display:flex;align-items:center;gap:6px"><span style="background:#8e44ad;width:10px;height:10px;border-radius:50%;display:inline-block"></span><span style="color:#1f2328">Heat Network</span></div><div style="display:flex;align-items:center;gap:6px"><span style="background:#2980b9;width:10px;height:10px;border-radius:50%;display:inline-block"></span><span style="color:#1f2328">Direct Electric</span></div><div style="display:flex;align-items:center;gap:6px"><span style="background:#7f8c8d;width:10px;height:10px;border-radius:50%;display:inline-block"></span><span style="color:#1f2328">Oil/Other</span></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-content:start">
+      <div data-tooltip="Fuel input: 39,765 MW&lt;br&gt;Domestic: 23,188 MW&lt;br&gt;Commercial: 8,624 MW&lt;br&gt;Cost: £2,688,114/h" style="background:#f6f8fa;border:1px solid #e67e22;border-radius:10px;padding:16px;border-left-width:4px;cursor:default"><div style="font-weight:600;color:#e67e22;margin-bottom:8px">Gas Boiler</div><div style="font-size:1.4rem;font-weight:700;color:#1f2328">31,812 <span style="font-size:0.8rem;color:#656d76">MW</span></div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">72.9% of total heat</div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">Carbon: 7,277.0 tCO₂/h</div></div><div data-tooltip="Fuel input: 1,622 MW&lt;br&gt;Domestic: 2,558 MW&lt;br&gt;Commercial: 2,310 MW&lt;br&gt;Cost: £397,512/h" style="background:#f6f8fa;border:1px solid #27ae60;border-radius:10px;padding:16px;border-left-width:4px;cursor:default"><div style="font-weight:600;color:#27ae60;margin-bottom:8px">Heat Pump</div><div style="font-size:1.4rem;font-weight:700;color:#1f2328">4,868 <span style="font-size:0.8rem;color:#656d76">MW</span></div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">11.2% of total heat</div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">Carbon: 157.4 tCO₂/h</div></div><div data-tooltip="Fuel input: 2,084 MW&lt;br&gt;Domestic: 725 MW&lt;br&gt;Commercial: 1,047 MW&lt;br&gt;Cost: £140,912/h" style="background:#f6f8fa;border:1px solid #8e44ad;border-radius:10px;padding:16px;border-left-width:4px;cursor:default"><div style="font-weight:600;color:#8e44ad;margin-bottom:8px">Heat Network</div><div style="font-size:1.4rem;font-weight:700;color:#1f2328">1,772 <span style="font-size:0.8rem;color:#656d76">MW</span></div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">4.1% of total heat</div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">Carbon: 381.5 tCO₂/h</div></div><div data-tooltip="Fuel input: 1,760 MW&lt;br&gt;Domestic: 682 MW&lt;br&gt;Commercial: 1,078 MW&lt;br&gt;Cost: £431,200/h" style="background:#f6f8fa;border:1px solid #2980b9;border-radius:10px;padding:16px;border-left-width:4px;cursor:default"><div style="font-weight:600;color:#2980b9;margin-bottom:8px">Direct Electric</div><div style="font-size:1.4rem;font-weight:700;color:#1f2328">1,760 <span style="font-size:0.8rem;color:#656d76">MW</span></div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">4.0% of total heat</div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">Carbon: 170.7 tCO₂/h</div></div><div data-tooltip="Fuel input: 4,268 MW&lt;br&gt;Domestic: 2,182 MW&lt;br&gt;Commercial: 1,232 MW&lt;br&gt;Cost: £288,517/h" style="background:#f6f8fa;border:1px solid #7f8c8d;border-radius:10px;padding:16px;border-left-width:4px;cursor:default"><div style="font-weight:600;color:#7f8c8d;margin-bottom:8px">Oil/Other</div><div style="font-size:1.4rem;font-weight:700;color:#1f2328">3,414 <span style="font-size:0.8rem;color:#656d76">MW</span></div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">7.8% of total heat</div><div style="font-size:0.78rem;color:#656d76;margin-top:4px">Carbon: 781.0 tCO₂/h</div></div>
+    </div>
+  </div>
+
+  <!-- Sector comparison -->
+  <div>
+    <h2 style="font-size:1rem;margin-bottom:14px">Sector Comparison</h2>
+    <div class="grid-2">
+      <div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:10px;padding:18px"><h3 style="margin:0 0 14px;font-size:1rem;color:#1f2328">Domestic</h3><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Gas Boiler</span><span style="color:#656d76">23,188 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#e67e22;width:79.0%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Heat Pump</span><span style="color:#656d76">2,558 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#27ae60;width:8.7%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Heat Network</span><span style="color:#656d76">725 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#8e44ad;width:2.5%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Direct Electric</span><span style="color:#656d76">682 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#2980b9;width:2.3%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Oil/Other</span><span style="color:#656d76">2,182 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#7f8c8d;width:7.4%;height:100%;border-radius:4px"></div></div></div><div style="margin-top:10px;font-size:0.78rem;color:#656d76">Total heat: <strong style="color:#0969da">29,335 MW</strong> | Carbon: <strong style="color:#cf222e">6,108 tCO₂/h</strong></div></div>
+      <div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:10px;padding:18px"><h3 style="margin:0 0 14px;font-size:1rem;color:#1f2328">Commercial / Public</h3><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Gas Boiler</span><span style="color:#656d76">8,624 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#e67e22;width:60.3%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Heat Pump</span><span style="color:#656d76">2,310 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#27ae60;width:16.2%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Heat Network</span><span style="color:#656d76">1,047 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#8e44ad;width:7.3%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Direct Electric</span><span style="color:#656d76">1,078 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#2980b9;width:7.5%;height:100%;border-radius:4px"></div></div></div><div style="margin-bottom:6px"><div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:2px"><span style="color:#1f2328">Oil/Other</span><span style="color:#656d76">1,232 MW</span></div><div style="background:#d0d7de;border-radius:4px;height:8px;overflow:hidden"><div style="background:#7f8c8d;width:8.6%;height:100%;border-radius:4px"></div></div></div><div style="margin-top:10px;font-size:0.78rem;color:#656d76">Total heat: <strong style="color:#0969da">14,291 MW</strong> | Carbon: <strong style="color:#cf222e">2,659 tCO₂/h</strong></div></div>
+    </div>
+  </div>
+
+  <!-- Carbon summary -->
+  <div class="card">
+    <h2>Carbon Summary</h2>
+    <div class="chips"><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:8px;padding:12px 18px;text-align:center;min-width:130px"><div style="font-size:0.72rem;color:#656d76;margin-bottom:4px">Gas CO₂</div><div style="font-size:1.1rem;font-weight:700;color:#bf8700">8,440 tCO₂/h</div></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:8px;padding:12px 18px;text-align:center;min-width:130px"><div style="font-size:0.72rem;color:#656d76;margin-bottom:4px">Elec CO₂</div><div style="font-size:1.1rem;font-weight:700;color:#0969da">328.1 tCO₂/h</div></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:8px;padding:12px 18px;text-align:center;min-width:130px"><div style="font-size:0.72rem;color:#656d76;margin-bottom:4px">Total CO₂</div><div style="font-size:1.1rem;font-weight:700;color:#cf222e">8,768 tCO₂/h</div></div><div style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:8px;padding:12px 18px;text-align:center;min-width:130px"><div style="font-size:0.72rem;color:#656d76;margin-bottom:4px">Total Gas</div><div style="font-size:1.1rem;font-weight:700;color:#656d76">55,000 MW</div></div></div>
+    <p style="margin-top:12px;font-size:0.78rem;color:#656d76">
+      Grid carbon intensity: <strong style="color:#1a7f37">0.097 kgCO₂/kWh</strong>
+      (moderate) | Gas emission factor: 0.183 kgCO₂e/kWh
+    </p>
+  </div>
+
+</div><!-- /main -->
+
+<footer>
+  <p>
+    Real-time UK gas transmission demand decomposed into domestic and commercial heat supply technologies.
+    Gas data: <a href="https://data.nationalgas.com" target="_blank">National Gas Transmission Data Portal</a>.
+    Weather: <a href="https://open-meteo.com" target="_blank">Open-Meteo</a>.
+    Carbon intensity: <a href="https://carbonintensity.org.uk" target="_blank">National Grid ESO Carbon Intensity API</a>.
+    Inspired by <a href="https://grid.iamkate.com/" target="_blank">grid.iamkate.com</a>.
+  </p>
+  <details>
+    <summary>Methodology &amp; Assumptions (A1–A16)</summary>
+    <ul><li style="margin-bottom:6px">A1: Domestic share of total gas: 62% (DESNZ 2023)</li><li style="margin-bottom:6px">A2: Commercial/public share: 28% (DESNZ)</li><li style="margin-bottom:6px">A3: Industrial/power (10%) excluded from heat analysis</li><li style="margin-bottom:6px">A4: Domestic gas split: 85% Space Heating, 15% DHW (BRE/SAP)</li><li style="margin-bottom:6px">A5: Non-domestic gas split: 75% Space Heating, 25% DHW (CIBSE TM46)</li><li style="margin-bottom:6px">A6: Domestic tech mix — Gas boiler 85%, HP 2.5%, Heat network 2.5%, Direct electric 2%, Oil/LPG/Other 8%</li><li style="margin-bottom:6px">A7: Commercial tech mix — Gas boiler 70%, HP 5%, Heat network 8%, Direct electric 7%, Oil/Other 10%</li><li style="margin-bottom:6px">A8: Gas boiler efficiency: 80%</li><li style="margin-bottom:6px">A9: Heat pump COP: 3.0</li><li style="margin-bottom:6px">A10: Heat network distribution losses: 15%</li><li style="margin-bottom:6px">A11: Gas emission factor: 0.183 kgCO₂e/kWh (DESNZ 2025)</li><li style="margin-bottom:6px">A12: Electricity carbon intensity: real-time from Carbon Intensity API (National Grid ESO)</li><li style="margin-bottom:6px">A13: Gas unit cost: 6.76 p/kWh (Ofgem Q1 2026)</li><li style="margin-bottom:6px">A14: Electricity unit cost: 24.50 p/kWh (Ofgem Q1 2026)</li><li style="margin-bottom:6px">A15: No weather-correction applied to live transmission data</li><li style="margin-bottom:6px">A16: All 13 LDZs (Local Distribution Zones) aggregated</li></ul>
+    <p style="margin-top:10px">
+      Data sources:
+      <a href="https://data.nationalgas.com" target="_blank">National Gas Instantaneous Flow (SOAP API)</a> ·
+      <a href="https://www.gov.uk/government/collections/energy-consumption-in-the-uk" target="_blank">DESNZ Energy Consumption in the UK</a> ·
+      <a href="https://api.carbonintensity.org.uk" target="_blank">Carbon Intensity API</a> ·
+      <a href="https://www.ofgem.gov.uk/check-if-energy-price-cap-affects-you" target="_blank">Ofgem Price Cap</a>
+    </p>
+  </details>
+</footer>
+<script>
+(function(){
+  var tip=document.createElement('div');
+  tip.style.cssText='position:fixed;background:#1f2328;color:#fff;padding:8px 12px;border-radius:8px;'
+    +'font-size:0.8rem;pointer-events:none;display:none;box-shadow:0 4px 12px rgba(0,0,0,.15);'
+    +'z-index:9999;max-width:220px;line-height:1.6;border-top:3px solid #0969da';
+  document.body.appendChild(tip);
+  function show(e,html){tip.innerHTML=html;tip.style.display='block';move(e);}
+  function move(e){
+    var cx=e.clientX||0;
+    var cy=e.clientY||0;
+    var x=cx+14,y=cy+14;
+    if(x+230>window.innerWidth)x=cx-230;
+    tip.style.left=x+'px';tip.style.top=y+'px';
+  }
+  function hide(){tip.style.display='none';}
+  document.querySelectorAll('svg path[data-tech]').forEach(function(p){
+    var tech=p.getAttribute('data-tech');
+    var mw=p.getAttribute('data-mw');
+    var pct=p.getAttribute('data-pct');
+    var col=p.getAttribute('fill');
+    var html='<span style="color:'+col+';font-weight:700">'+tech+'</span><br>'+mw+' MW &nbsp; '+pct+'%';
+    p.addEventListener('mouseover',function(e){show(e,html);});
+    p.addEventListener('mousemove',move);
+    p.addEventListener('mouseout',hide);
+    p.addEventListener('touchend',function(e){show(e,html);});
+  });
+  document.querySelectorAll('[data-tooltip]').forEach(function(el){
+    var raw=el.getAttribute('data-tooltip');
+    var html=raw.replace(/&lt;br&gt;/g,'<br>');
+    el.addEventListener('mouseover',function(e){show(e,html);});
+    el.addEventListener('mousemove',move);
+    el.addEventListener('mouseout',hide);
+  });
+})();
+</script>
+</body>
+</html>
